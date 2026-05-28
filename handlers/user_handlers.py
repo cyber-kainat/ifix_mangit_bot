@@ -185,7 +185,7 @@ async def contact_handler(message: Message):
     user = await db.get_user(message.from_user.id)
     if not user or not user['is_approved']:
         return
-    
+
     await message.answer(
         "📞 <b>Bog'lanish</b>\n\n"
         f"☎️ Telefon: {config.SHOP_PHONE}\n"
@@ -193,6 +193,46 @@ async def contact_handler(message: Message):
         "Ish vaqti: 09:00 - 19:00 (Dushanba-Shanba)",
         parse_mode="HTML"
     )
+
+
+@router.message(F.text == "💳 Qarzlarim")
+async def my_debts(message: Message):
+    user = await db.get_user(message.from_user.id)
+    if not user or not user['is_approved']:
+        return
+
+    total = await db.get_user_total_debt(user['id'])
+    if total <= 0:
+        await message.answer(
+            "✅ <b>Sizda qarz yo'q!</b>\n\nBarcha buyurtmalaringiz to'liq to'langan.",
+            parse_mode="HTML"
+        )
+        return
+
+    debts = await db.get_user_debts(user['id'])
+    text = (
+        f"💳 <b>Sizning qarzlaringiz</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"<b>Jami qarz: {int(total):,} so'm</b>\n"
+        f"Buyurtmalar soni: {len(debts)} ta\n\n"
+    )
+    for d in debts[:10]:
+        product_title = d.get('product_name', '?')
+        if d.get('brand_name') and d.get('model_name'):
+            product_title = f"{d['brand_name']} {d['model_name']} — {product_title}"
+        cat = d.get('category_icon', '📦')
+        debt_amount = float(d['total_price']) - float(d.get('paid_amount', 0) or 0)
+        text += (
+            f"📦 <b>#{d['id']}</b>\n"
+            f"   {cat} {product_title}\n"
+            f"   Jami: {int(d['total_price']):,} so'm\n"
+            f"   To'langan: {int(d.get('paid_amount', 0) or 0):,} so'm\n"
+            f"   <b>Qarz: {int(debt_amount):,} so'm</b>\n"
+            f"   📅 {d['created_at'][:16]}\n\n"
+        )
+
+    text += f"\n📞 To'lov uchun: {config.SHOP_PHONE}"
+    await message.answer(text, parse_mode="HTML")
 
 
 @router.message(F.text == "🔙 Asosiy menyuga")

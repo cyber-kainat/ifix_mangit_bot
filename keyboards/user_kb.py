@@ -21,79 +21,104 @@ def get_main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="🛒 Katalog"), KeyboardButton(text="📋 Buyurtmalarim")],
-            [KeyboardButton(text="ℹ️ Ma'lumot"), KeyboardButton(text="📞 Aloqa")]
+            [KeyboardButton(text="💳 Qarzlarim"), KeyboardButton(text="📞 Aloqa")],
+            [KeyboardButton(text="ℹ️ Ma'lumot")]
         ],
         resize_keyboard=True
     )
 
 
-def get_brands_keyboard(brands: list) -> InlineKeyboardMarkup:
-    """Brendlar ro'yxati"""
+def get_categories_keyboard(categories: list) -> InlineKeyboardMarkup:
+    """Mahsulot turlari (Ekran / Krishka / Batareya / Aksessuar...)"""
     buttons = []
-    # Brendlarni 2 ta qatorga joylash
     row = []
-    for brand in brands:
+    for cat in categories:
         row.append(InlineKeyboardButton(
-            text=f"📱 {brand['name']}",
-            callback_data=f"brand_{brand['id']}"
+            text=f"{cat['icon']} {cat['name']}",
+            callback_data=f"cat_{cat['id']}"
         ))
         if len(row) == 2:
             buttons.append(row)
             row = []
     if row:
         buttons.append(row)
-    
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_models_keyboard(models: list, brand_id: int) -> InlineKeyboardMarkup:
+def get_brands_keyboard(brands: list, category_id: int) -> InlineKeyboardMarkup:
+    """Brendlar ro'yxati"""
+    buttons = []
+    row = []
+    for brand in brands:
+        row.append(InlineKeyboardButton(
+            text=f"📱 {brand['name']}",
+            callback_data=f"brand_{category_id}_{brand['id']}"
+        ))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton(text="⬅️ Kategoriyalar", callback_data="back_to_categories")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_models_keyboard(models: list, brand_id: int, category_id: int) -> InlineKeyboardMarkup:
     """Modellar ro'yxati"""
     buttons = []
     row = []
     for model in models:
         row.append(InlineKeyboardButton(
             text=model['name'],
-            callback_data=f"model_{model['id']}"
+            callback_data=f"model_{category_id}_{model['id']}"
         ))
         if len(row) == 2:
             buttons.append(row)
             row = []
     if row:
         buttons.append(row)
-    
-    buttons.append([InlineKeyboardButton(text="⬅️ Ortga", callback_data="back_to_brands")])
+
+    buttons.append([InlineKeyboardButton(
+        text="⬅️ Brendlar",
+        callback_data=f"back_to_brands_{category_id}"
+    )])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_screens_keyboard(screens: list, model_id: int) -> InlineKeyboardMarkup:
-    """Ekran turlari ro'yxati"""
+def get_products_keyboard(products: list, model_id: int, category_id: int) -> InlineKeyboardMarkup:
+    """Mahsulotlar ro'yxati (ekran/krishka/batareya turlari yoki aksessuarlar)"""
     buttons = []
-    for screen in screens:
-        stock_emoji = "✅" if screen['quantity'] > 0 else "❌"
-        text = f"{stock_emoji} {screen['screen_type']} - {int(screen['price']):,} so'm"
+    for p in products:
+        stock_emoji = "✅" if p['quantity'] > 0 else "❌"
+        text = f"{stock_emoji} {p['name']} - {int(p['price']):,} so'm"
         buttons.append([InlineKeyboardButton(
             text=text,
-            callback_data=f"screen_{screen['id']}"
+            callback_data=f"prod_{p['id']}"
         )])
-    
-    model = screens[0] if screens else None
-    if model:
+
+    if model_id:
         buttons.append([InlineKeyboardButton(
-            text="⬅️ Ortga",
-            callback_data=f"back_to_models_{model.get('model_id', 0)}"
+            text="⬅️ Modellar",
+            callback_data=f"back_to_models_{category_id}_{model_id}"
+        )])
+    else:
+        # Aksessuarlar — to'g'ridan-to'g'ri kategoriyaga
+        buttons.append([InlineKeyboardButton(
+            text="⬅️ Kategoriyalar",
+            callback_data="back_to_categories"
         )])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_quantity_keyboard(screen_id: int, current: int = 1, max_qty: int = 1) -> InlineKeyboardMarkup:
+def get_quantity_keyboard(product_id: int, current: int = 1, max_qty: int = 1) -> InlineKeyboardMarkup:
     """Miqdor tanlash"""
     row1 = [
-        InlineKeyboardButton(text="➖", callback_data=f"qty_minus_{screen_id}_{current}"),
+        InlineKeyboardButton(text="➖", callback_data=f"qty_minus_{product_id}_{current}"),
         InlineKeyboardButton(text=f"{current} dona", callback_data="ignore"),
-        InlineKeyboardButton(text="➕", callback_data=f"qty_plus_{screen_id}_{current}_{max_qty}")
+        InlineKeyboardButton(text="➕", callback_data=f"qty_plus_{product_id}_{current}_{max_qty}")
     ]
     row2 = [
-        InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"qty_ok_{screen_id}_{current}"),
+        InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"qty_ok_{product_id}_{current}"),
         InlineKeyboardButton(text="❌ Bekor", callback_data="cancel_order")
     ]
     return InlineKeyboardMarkup(inline_keyboard=[row1, row2])
@@ -114,6 +139,16 @@ def get_pickup_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🏪 Do'kondan olib ketaman", callback_data="pickup_shop")],
         [InlineKeyboardButton(text="🚚 Yetkazib berish kerak", callback_data="pickup_delivery")],
+        [InlineKeyboardButton(text="❌ Bekor", callback_data="cancel_order")]
+    ])
+
+
+def get_payment_status_keyboard() -> InlineKeyboardMarkup:
+    """To'lov holati (to'liq / qarz / qisman)"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ To'liq to'layman", callback_data="pstatus_paid")],
+        [InlineKeyboardButton(text="📒 Qarzga olaman", callback_data="pstatus_debt")],
+        [InlineKeyboardButton(text="💰 Qisman to'layman", callback_data="pstatus_partial")],
         [InlineKeyboardButton(text="❌ Bekor", callback_data="cancel_order")]
     ])
 

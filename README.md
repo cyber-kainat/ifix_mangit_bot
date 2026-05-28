@@ -7,18 +7,22 @@ Telefon servis ustalari uchun ekran buyurtma qilish boti. Adminlar mahsulotlarni
 ### Ustalar uchun:
 - ✅ Ism va telefon orqali ro'yxatdan o'tish
 - ✅ Admin tasdig'ini kutish
-- ✅ Brend → Model → Ekran turi bo'yicha tezkor katalog
-- ✅ Mahsulot narxi va mavjudligini ko'rish
+- ✅ **Kategoriya** → Brend → Model → Mahsulot bo'yicha katalog
+- ✅ Mahsulot turlari: **Ekran, Orqa krishka, Batareya, Kamera shisha, Pastki plata, Aksessuar**
 - ✅ Miqdorni tanlab buyurtma berish
 - ✅ 3 xil to'lov: Naqd, Click, Payme
+- ✅ **To'liq / Qarz / Qisman to'lov** tanlash
 - ✅ Do'kondan olib ketish yoki yetkazib berish
-- ✅ Buyurtmalar tarixi va holatini kuzatish
+- ✅ Buyurtmalar tarixi va o'z qarzlarini ko'rish
 
 ### Adminlar uchun:
-- 👑 To'liq statistika (ustalar, mahsulotlar, sotuvlar)
-- 👥 Ustalarni tasdiqlash/bloklash
-- 📦 Brend, Model, Ekran qo'shish
-- 💰 Narx va miqdorni real-time yangilash
+- 👑 To'liq statistika (ustalar, mahsulotlar, sotuvlar, qarzlar)
+- 💰 **Sotuv bo'limi** — sana oralig'i bo'yicha foyda/zarar hisoboti (Excel eksport)
+- 💳 **Qarzlar** — har bir ustaning qarzini ko'rish va to'lov qabul qilish
+- 📉 **Tugab qolayotgan mahsulotlar** — Toshkentdan zakaz uchun Excel ro'yxat
+- 👥 Ustalarni tasdiqlash/bloklash, qarzlarini ko'rish
+- 📦 Kategoriya bo'yicha mahsulot qo'shish (tannarx + sotish narxi)
+- 💰 Narx, tannarx, miqdor va minimum miqdorni yangilash
 - 🛍 Buyurtmalarni boshqarish (tasdiqlash, bekor qilish, yakunlash)
 - 🔔 Yangi buyurtma va ro'yxatdan o'tish haqida xabarnomalar
 
@@ -28,6 +32,7 @@ Telefon servis ustalari uchun ekran buyurtma qilish boti. Adminlar mahsulotlarni
 - **aiogram 3.13** - eng tezkor Telegram Bot framework
 - **SQLite + aiosqlite** - asinxron ma'lumotlar bazasi
 - **FSM** - dialoglarni boshqarish uchun
+- **openpyxl** - Excel hisobotlar uchun
 
 ## 📦 O'rnatish
 
@@ -133,8 +138,39 @@ telegram_bot/
 - **users** - ustalar (ID, ism, telefon, tasdiq/blok holati)
 - **brands** - brendlar (iPhone, Samsung...)
 - **models** - modellar (har bir brendga bog'langan)
-- **screens** - ekranlar (tur, narx, miqdor)
-- **orders** - buyurtmalar (mijoz, mahsulot, to'lov, holati)
+- **categories** - kategoriyalar (Ekran, Krishka, Batareya, Kamera shisha, Pastki plata, Aksessuar)
+- **products** - mahsulotlar (kategoriya, model, tannarx, sotish narxi, miqdor, min_quantity)
+- **orders** - buyurtmalar (mijoz, mahsulot, to'lov, qarz, holat, tannarx)
+- **screens** - eski jadval (legacy; products ga migratsiya qilingan)
+
+## 📊 Yangi imkoniyatlar (v2)
+
+### 💰 Sotuv hisoboti
+Admin panelida **💰 Sotuv** tugmasi bosib, sana oralig'ini tanlang:
+- Bugun, Kecha, Bu hafta, Bu oy, O'tgan oy, 3 oy yoki maxsus oraliq
+- Hisobot: Tushum, Tannarx, **Foyda/Zarar**, Marja %
+- Excel formatda yuklab olish (3 ta varaq: umumiy, kategoriya, buyurtmalar)
+
+### 💳 Qarz tizimi
+- Buyurtma berishda usta **To'liq / Qarz / Qisman** to'lov tanlashi mumkin
+- Admin har bir qarzdor ustani ko'radi (jami qarz miqdori bilan)
+- Qisman to'lov qabul qilish yoki barcha qarzni "to'langan" deb belgilash
+- Usta o'z qarzini "💳 Qarzlarim" tugmasi orqali ko'radi
+
+### 📉 Tugab qolayotganlar (Toshkentdan zakaz uchun)
+- Admin panelida **📉 Tugab qolganlar** tugmasi
+- `quantity <= min_quantity` bo'lgan barcha mahsulotlar
+- Kategoriya bo'yicha filter
+- **Excel eksport**: 0 dona qizil rang, oz qolganlar sariq rang
+- Toshkentdan Amudaryo tumani Mangit shahriga zakaz qilish uchun qulay ro'yxat
+
+### 🧰 Yangi kategoriyalar
+- 📱 Ekran (mavjud edi)
+- 🪞 Orqa krishka (yangi)
+- 🔋 Batareya (yangi)
+- 📷 Kamera shisha (yangi)
+- 🔌 Pastki plata (yangi)
+- 🧰 Aksessuar (brend/modelsiz — universal mahsulotlar)
 
 ## ⚡ Performance
 
