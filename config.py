@@ -15,8 +15,8 @@ class Config:
     # O'z ID raqamingizni @userinfobot dan oling
     ADMIN_IDS: List[int] = field(default_factory=lambda: [5939503983, 813345127])
     
-    # Ma'lumotlar bazasi nomi
-    DB_NAME: str = "shop.db"
+    # Ma'lumotlar bazasi yo'li (Railway Volume uchun env orqali "/data/shop.db")
+    DB_NAME: str = os.getenv("DB_NAME", "shop.db")
     
     # To'lov ma'lumotlari (Click va Payme uchun kartalar)
     CLICK_CARD: str = "8600 1234 5678 9012"

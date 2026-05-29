@@ -2,12 +2,15 @@
 SQLite ma'lumotlar bazasi - barcha jadvallar va funksiyalar
 Yangilangan: kategoriyalar, tannarx (cost_price), qarz, foyda hisoboti
 """
+import os
 import aiosqlite
 from datetime import datetime
 from typing import Optional
 
 
-DB_NAME = "shop.db"
+# Bazaning yo'li. Railway da Volume ulanganda env orqali "/data/shop.db" beriladi.
+# Lokal ishlatishda standart "shop.db".
+DB_NAME = os.getenv("DB_NAME", "shop.db")
 
 
 # Standart kategoriyalar (init paytida bazaga qo'shiladi)
@@ -32,6 +35,10 @@ async def _column_exists(db, table: str, column: str) -> bool:
 
 async def init_db():
     """Bazani yaratish va boshlang'ich jadvallarni o'rnatish + migratsiya"""
+    # Volume yo'li berilgan bo'lsa (masalan /data/shop.db), papkani yaratib qo'yamiz
+    db_dir = os.path.dirname(DB_NAME)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
     async with aiosqlite.connect(DB_NAME) as db:
         # ---- Foydalanuvchilar (ustalar) jadvali ----
         await db.execute("""
