@@ -27,8 +27,70 @@ def get_products_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="➕ Brend qo'shish", callback_data="admin_add_brand")],
         [InlineKeyboardButton(text="➕ Model qo'shish", callback_data="admin_add_model")],
         [InlineKeyboardButton(text="➕ Mahsulot qo'shish", callback_data="admin_add_product")],
-        [InlineKeyboardButton(text="📋 Brendlar ro'yxati", callback_data="admin_list_brands")],
-        [InlineKeyboardButton(text="✏️ Mahsulotni tahrirlash", callback_data="admin_edit_product")]
+        [InlineKeyboardButton(text="✏️ Mahsulotni tahrirlash", callback_data="admin_edit_product")],
+        [InlineKeyboardButton(text="🗂 Brend / Model boshqarish", callback_data="mng_brands")],
+        [InlineKeyboardButton(text="📋 Brendlar ro'yxati", callback_data="admin_list_brands")]
+    ])
+
+
+# ============ TO'LIQ BOSHQARUV (brend/model o'chirish, nomini o'zgartirish) ============
+
+def get_manage_brands_kb(brands: list) -> InlineKeyboardMarkup:
+    """Barcha brendlar (boshqarish uchun)"""
+    buttons = []
+    for b in brands:
+        buttons.append([InlineKeyboardButton(
+            text=f"📱 {b['name']}", callback_data=f"mngb_{b['id']}"
+        )])
+    buttons.append([InlineKeyboardButton(text="❌ Yopish", callback_data="admin_cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_brand_manage_kb(brand_id: int) -> InlineKeyboardMarkup:
+    """Bitta brend uchun amallar"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📂 Modellarini ko'rish", callback_data=f"mngml_{brand_id}")],
+        [InlineKeyboardButton(text="✏️ Nomini o'zgartirish", callback_data=f"mngbren_{brand_id}")],
+        [InlineKeyboardButton(text="🗑 Brendni o'chirish", callback_data=f"mngbdel_{brand_id}")],
+        [InlineKeyboardButton(text="⬅️ Brendlar", callback_data="mng_brands")]
+    ])
+
+
+def get_brand_delete_confirm_kb(brand_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Ha, o'chirilsin", callback_data=f"mngbdy_{brand_id}"),
+            InlineKeyboardButton(text="❌ Yo'q", callback_data=f"mngb_{brand_id}")
+        ]
+    ])
+
+
+def get_manage_models_kb(models: list, brand_id: int) -> InlineKeyboardMarkup:
+    """Brendning barcha modellari (boshqarish uchun)"""
+    buttons = []
+    for m in models:
+        buttons.append([InlineKeyboardButton(
+            text=m['name'], callback_data=f"mngm_{m['id']}"
+        )])
+    buttons.append([InlineKeyboardButton(text="⬅️ Ortga", callback_data=f"mngb_{brand_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_model_manage_kb(model_id: int, brand_id: int) -> InlineKeyboardMarkup:
+    """Bitta model uchun amallar"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Nomini o'zgartirish", callback_data=f"mngmren_{model_id}")],
+        [InlineKeyboardButton(text="🗑 Modelni o'chirish", callback_data=f"mngmdel_{model_id}")],
+        [InlineKeyboardButton(text="⬅️ Modellar", callback_data=f"mngml_{brand_id}")]
+    ])
+
+
+def get_model_delete_confirm_kb(model_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Ha, o'chirilsin", callback_data=f"mngmdy_{model_id}"),
+            InlineKeyboardButton(text="❌ Yo'q", callback_data=f"mngm_{model_id}")
+        ]
     ])
 
 
@@ -84,6 +146,7 @@ def get_products_admin_keyboard(products: list, action: str = "edit") -> InlineK
 def get_product_edit_keyboard(product_id: int) -> InlineKeyboardMarkup:
     """Mahsulotni tahrirlash menyusi"""
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Nomini o'zgartirish", callback_data=f"edit_name_{product_id}")],
         [InlineKeyboardButton(text="💰 Sotish narxi", callback_data=f"edit_price_{product_id}")],
         [InlineKeyboardButton(text="🏷 Tannarx", callback_data=f"edit_cost_{product_id}")],
         [InlineKeyboardButton(text="📦 Miqdor", callback_data=f"edit_qty_{product_id}")],

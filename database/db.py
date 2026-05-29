@@ -316,8 +316,42 @@ async def get_brand(brand_id: int) -> Optional[dict]:
         return dict(row) if row else None
 
 
-async def delete_brand(brand_id: int):
+async def rename_brand(brand_id: int, name: str) -> bool:
+    """Brend nomini o'zgartirish. Nom band bo'lsa False qaytaradi."""
     async with aiosqlite.connect(DB_NAME) as db:
+        try:
+            await db.execute("UPDATE brands SET name = ? WHERE id = ?", (name, brand_id))
+            await db.commit()
+            return True
+        except Exception:
+            return False
+
+
+async def count_brand_children(brand_id: int) -> dict:
+    """Brendga tegishli model va mahsulotlar soni (o'chirishdan oldin ogohlantirish uchun)."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        cur = await db.execute("SELECT COUNT(*) FROM models WHERE brand_id = ?", (brand_id,))
+        models = (await cur.fetchone())[0]
+        cur = await db.execute(
+            "SELECT COUNT(*) FROM products WHERE model_id IN (SELECT id FROM models WHERE brand_id = ?)",
+            (brand_id,)
+        )
+        products = (await cur.fetchone())[0]
+        return {"models": models, "products": products}
+
+
+async def delete_brand(brand_id: int):
+    """Brendni va unga bog'liq barcha model/mahsulot/ekranlarni o'chiradi (cascade)."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "DELETE FROM products WHERE model_id IN (SELECT id FROM models WHERE brand_id = ?)",
+            (brand_id,)
+        )
+        await db.execute(
+            "DELETE FROM screens WHERE model_id IN (SELECT id FROM models WHERE brand_id = ?)",
+            (brand_id,)
+        )
+        await db.execute("DELETE FROM models WHERE brand_id = ?", (brand_id,))
         await db.execute("DELETE FROM brands WHERE id = ?", (brand_id,))
         await db.commit()
 
@@ -355,8 +389,51 @@ async def get_model(model_id: int) -> Optional[dict]:
         return dict(row) if row else None
 
 
-async def delete_model(model_id: int):
+async def rename_model(model_id: int, name: str) -> bool:
+    """Model nomini o'zgartirish. Nom band bo'lsa False qaytaradi."""
     async with aiosqlite.connect(DB_NAME) as db:
+        try:
+            await db.execute("UPDATE models SET name = ? WHERE id = ?", (name, model_id))
+            await db.commit()
+            return True
+        except Exception:
+            return False
+
+
+async def count_model_products(model_id: int) -> int:
+    async with aiosqlite.connect(DB_NAME) as db:
+        cur = await db.execute("SELECT COUNT(*) FROM products WHERE model_id = ?", (model_id,))
+        return (await cur.fetchone())[0]
+
+
+async def get_all_models_of_brand(brand_id: int) -> list:
+    """Brendning BARCHA modellari (mahsuloti bor-yo'qligidan qat'i nazar)."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM models WHERE brand_id = ? ORDER BY name", (brand_id,)
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_all_products_of_model(model_id: int) -> list:
+    """Modelning BARCHA mahsulotlari (har qanday kategoriya)."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """SELECT p.*, c.name as category_name, c.icon as category_icon
+               FROM products p JOIN categories c ON p.category_id = c.id
+               WHERE p.model_id = ? ORDER BY c.id, p.name""",
+            (model_id,)
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def delete_model(model_id: int):
+    """Modelni va unga bog'liq mahsulot/ekranlarni o'chiradi (cascade)."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("DELETE FROM products WHERE model_id = ?", (model_id,))
+        await db.execute("DELETE FROM screens WHERE model_id = ?", (model_id,))
         await db.execute("DELETE FROM models WHERE id = ?", (model_id,))
         await db.commit()
 
@@ -491,6 +568,12 @@ async def update_product_quantity(product_id: int, quantity: int):
 async def update_product_min_quantity(product_id: int, min_qty: int):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("UPDATE products SET min_quantity = ? WHERE id = ?", (min_qty, product_id))
+        await db.commit()
+
+
+async def rename_product(product_id: int, name: str):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("UPDATE products SET name = ? WHERE id = ?", (name, product_id))
         await db.commit()
 
 

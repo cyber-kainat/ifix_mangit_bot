@@ -50,6 +50,11 @@ class AdminStates(StatesGroup):
     waiting_new_quantity = State()
     waiting_new_min_qty = State()
 
+    # Nomini o'zgartirish
+    waiting_brand_rename = State()
+    waiting_model_rename = State()
+    waiting_product_rename = State()
+
     # Bazani tiklash (restore)
     waiting_restore_file = State()
 

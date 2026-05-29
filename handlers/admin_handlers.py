@@ -19,7 +19,9 @@ from keyboards.admin_kb import (
     get_user_action_keyboard, get_order_admin_keyboard,
     get_sales_period_keyboard, get_sales_report_actions,
     get_debtors_keyboard, get_debt_actions_keyboard, get_debt_orders_keyboard,
-    get_low_stock_keyboard
+    get_low_stock_keyboard,
+    get_manage_brands_kb, get_brand_manage_kb, get_brand_delete_confirm_kb,
+    get_manage_models_kb, get_model_manage_kb, get_model_delete_confirm_kb
 )
 from keyboards.user_kb import get_main_menu
 from states import AdminStates, SalesReportStates, DebtStates
@@ -1135,6 +1137,30 @@ async def edit_select_product(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("edit_name_"))
+async def edit_name_start(callback: CallbackQuery, state: FSMContext):
+    product_id = int(callback.data.split("_")[2])
+    await state.update_data(product_id=product_id)
+    await state.set_state(AdminStates.waiting_product_rename)
+    await callback.message.edit_text("✏️ Yangi mahsulot nomini kiriting:")
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_product_rename, F.text)
+async def save_product_rename(message: Message, state: FSMContext):
+    name = message.text.strip()
+    if len(name) < 2 or len(name) > 100:
+        await message.answer("❌ Nom 2-100 belgi bo'lishi kerak.")
+        return
+    data = await state.get_data()
+    await db.rename_product(data['product_id'], name)
+    await state.clear()
+    await message.answer(
+        f"✅ Mahsulot nomi o'zgartirildi: <b>{name}</b>",
+        parse_mode="HTML", reply_markup=get_admin_menu()
+    )
+
+
 @router.callback_query(F.data.startswith("edit_price_"))
 async def edit_price_start(callback: CallbackQuery, state: FSMContext):
     product_id = int(callback.data.split("_")[2])
@@ -1249,6 +1275,238 @@ async def delete_product_cb(callback: CallbackQuery):
     await db.delete_product(product_id)
     await callback.message.edit_text("🗑 Mahsulot o'chirildi.")
     await callback.answer("O'chirildi!")
+
+
+# ============ TO'LIQ BOSHQARUV: BREND / MODEL ============
+
+@router.callback_query(F.data == "mng_brands")
+async def mng_brands(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    await state.clear()
+    brands = await db.get_brands()
+    if not brands:
+        await callback.message.edit_text("📭 Brendlar yo'q. Avval brend qo'shing.")
+        await callback.answer()
+        return
+    await callback.message.edit_text(
+        "🗂 <b>Brend / Model boshqarish</b>\n\nBrendni tanlang:",
+        parse_mode="HTML", reply_markup=get_manage_brands_kb(brands)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mngb_"))
+async def mng_brand_detail(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    brand_id = int(callback.data.split("_")[1])
+    brand = await db.get_brand(brand_id)
+    if not brand:
+        await callback.answer("Brend topilmadi", show_alert=True)
+        return
+    cnt = await db.count_brand_children(brand_id)
+    await callback.message.edit_text(
+        f"📱 <b>{brand['name']}</b>\n\n"
+        f"📂 Modellar: {cnt['models']} ta\n"
+        f"📦 Mahsulotlar: {cnt['products']} ta\n\n"
+        f"Amalni tanlang:",
+        parse_mode="HTML", reply_markup=get_brand_manage_kb(brand_id)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mngbren_"))
+async def mng_brand_rename_start(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    brand_id = int(callback.data.split("_")[1])
+    brand = await db.get_brand(brand_id)
+    await state.update_data(brand_id=brand_id)
+    await state.set_state(AdminStates.waiting_brand_rename)
+    await callback.message.edit_text(
+        f"✏️ <b>{brand['name']}</b> uchun yangi nom kiriting:",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_brand_rename, F.text)
+async def mng_brand_rename_save(message: Message, state: FSMContext):
+    name = message.text.strip()
+    if len(name) < 2 or len(name) > 50:
+        await message.answer("❌ Nom 2-50 belgi bo'lishi kerak.")
+        return
+    data = await state.get_data()
+    ok = await db.rename_brand(data['brand_id'], name)
+    await state.clear()
+    if ok:
+        await message.answer(
+            f"✅ Brend nomi o'zgartirildi: <b>{name}</b>",
+            parse_mode="HTML", reply_markup=get_admin_menu()
+        )
+    else:
+        await message.answer(
+            f"❌ <b>{name}</b> nomi band yoki xato. Boshqa nom tanlang.",
+            parse_mode="HTML", reply_markup=get_admin_menu()
+        )
+
+
+@router.callback_query(F.data.startswith("mngbdel_"))
+async def mng_brand_delete_confirm(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    brand_id = int(callback.data.split("_")[1])
+    brand = await db.get_brand(brand_id)
+    cnt = await db.count_brand_children(brand_id)
+    await callback.message.edit_text(
+        f"🗑 <b>{brand['name']}</b> brendini o'chirasizmi?\n\n"
+        f"⚠️ Bu bilan birga <b>{cnt['models']} ta model</b> va "
+        f"<b>{cnt['products']} ta mahsulot</b> ham o'chadi!\n"
+        f"Buni ortga qaytarib bo'lmaydi.",
+        parse_mode="HTML", reply_markup=get_brand_delete_confirm_kb(brand_id)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mngbdy_"))
+async def mng_brand_delete_yes(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    brand_id = int(callback.data.split("_")[1])
+    brand = await db.get_brand(brand_id)
+    name = brand['name'] if brand else "?"
+    await db.delete_brand(brand_id)
+    brands = await db.get_brands()
+    if brands:
+        await callback.message.edit_text(
+            f"🗑 <b>{name}</b> o'chirildi.\n\n🗂 Qolgan brendlar:",
+            parse_mode="HTML", reply_markup=get_manage_brands_kb(brands)
+        )
+    else:
+        await callback.message.edit_text(
+            f"🗑 <b>{name}</b> o'chirildi. Boshqa brend qolmadi.",
+            parse_mode="HTML"
+        )
+    await callback.answer("O'chirildi")
+
+
+@router.callback_query(F.data.startswith("mngml_"))
+async def mng_models_list(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    brand_id = int(callback.data.split("_")[1])
+    brand = await db.get_brand(brand_id)
+    models = await db.get_all_models_of_brand(brand_id)
+    if not models:
+        await callback.message.edit_text(
+            f"📂 <b>{brand['name']}</b> da model yo'q.",
+            parse_mode="HTML", reply_markup=get_brand_manage_kb(brand_id)
+        )
+        await callback.answer()
+        return
+    await callback.message.edit_text(
+        f"📂 <b>{brand['name']}</b> modellari:\n\nBoshqarish uchun tanlang:",
+        parse_mode="HTML", reply_markup=get_manage_models_kb(models, brand_id)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mngm_"))
+async def mng_model_detail(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    model_id = int(callback.data.split("_")[1])
+    model = await db.get_model(model_id)
+    if not model:
+        await callback.answer("Model topilmadi", show_alert=True)
+        return
+    pcount = await db.count_model_products(model_id)
+    await callback.message.edit_text(
+        f"📱 <b>{model['brand_name']} {model['name']}</b>\n\n"
+        f"📦 Mahsulotlar: {pcount} ta\n\nAmalni tanlang:",
+        parse_mode="HTML", reply_markup=get_model_manage_kb(model_id, model['brand_id'])
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mngmren_"))
+async def mng_model_rename_start(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    model_id = int(callback.data.split("_")[1])
+    model = await db.get_model(model_id)
+    await state.update_data(model_id=model_id)
+    await state.set_state(AdminStates.waiting_model_rename)
+    await callback.message.edit_text(
+        f"✏️ <b>{model['brand_name']} {model['name']}</b> uchun yangi model nomi:",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_model_rename, F.text)
+async def mng_model_rename_save(message: Message, state: FSMContext):
+    name = message.text.strip()
+    if len(name) < 1 or len(name) > 50:
+        await message.answer("❌ Nom 1-50 belgi bo'lishi kerak.")
+        return
+    data = await state.get_data()
+    ok = await db.rename_model(data['model_id'], name)
+    await state.clear()
+    if ok:
+        await message.answer(
+            f"✅ Model nomi o'zgartirildi: <b>{name}</b>",
+            parse_mode="HTML", reply_markup=get_admin_menu()
+        )
+    else:
+        await message.answer(
+            f"❌ <b>{name}</b> nomi shu brendda band. Boshqa nom tanlang.",
+            parse_mode="HTML", reply_markup=get_admin_menu()
+        )
+
+
+@router.callback_query(F.data.startswith("mngmdel_"))
+async def mng_model_delete_confirm(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    model_id = int(callback.data.split("_")[1])
+    model = await db.get_model(model_id)
+    pcount = await db.count_model_products(model_id)
+    await callback.message.edit_text(
+        f"🗑 <b>{model['brand_name']} {model['name']}</b> modelini o'chirasizmi?\n\n"
+        f"⚠️ Bu bilan <b>{pcount} ta mahsulot</b> ham o'chadi!\n"
+        f"Ortga qaytarib bo'lmaydi.",
+        parse_mode="HTML", reply_markup=get_model_delete_confirm_kb(model_id)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mngmdy_"))
+async def mng_model_delete_yes(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    model_id = int(callback.data.split("_")[1])
+    model = await db.get_model(model_id)
+    brand_id = model['brand_id'] if model else None
+    name = f"{model['brand_name']} {model['name']}" if model else "?"
+    await db.delete_model(model_id)
+    if brand_id:
+        brand = await db.get_brand(brand_id)
+        models = await db.get_all_models_of_brand(brand_id)
+        if models:
+            await callback.message.edit_text(
+                f"🗑 <b>{name}</b> o'chirildi.\n\n📂 {brand['name']} qolgan modellari:",
+                parse_mode="HTML", reply_markup=get_manage_models_kb(models, brand_id)
+            )
+        else:
+            await callback.message.edit_text(
+                f"🗑 <b>{name}</b> o'chirildi. Bu brendda model qolmadi.",
+                parse_mode="HTML", reply_markup=get_brand_manage_kb(brand_id)
+            )
+    else:
+        await callback.message.edit_text(f"🗑 <b>{name}</b> o'chirildi.", parse_mode="HTML")
+    await callback.answer("O'chirildi")
 
 
 # ============ BUYURTMALARNI BOSHQARISH ============
