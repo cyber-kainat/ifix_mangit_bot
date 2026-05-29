@@ -13,7 +13,7 @@ class Config:
     
     # Admin Telegram ID raqamlari (ro'yxat - bir nechta admin bo'lishi mumkin)
     # O'z ID raqamingizni @userinfobot dan oling
-    ADMIN_IDS: List[int] = field(default_factory=lambda: [5939503983, 813345127])
+    ADMIN_IDS: List[int] = field(default_factory=lambda: [5939503983, 813345127, 8001740351])
     
     # Ma'lumotlar bazasi yo'li (Railway Volume uchun env orqali "/data/shop.db")
     DB_NAME: str = os.getenv("DB_NAME", "shop.db")
