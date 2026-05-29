@@ -7,6 +7,8 @@ import aiosqlite
 from datetime import datetime
 from typing import Optional
 
+from config import uz_now_str
+
 
 # Bazaning yo'li. Railway da Volume ulanganda env orqali "/data/shop.db" beriladi.
 # Lokal ishlatishda standart "shop.db".
@@ -231,8 +233,8 @@ async def _migrate_screens_to_products(db):
 async def add_user(telegram_id: int, full_name: str, phone: str, username: str = None) -> int:
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute(
-            "INSERT OR IGNORE INTO users (telegram_id, full_name, phone, username) VALUES (?, ?, ?, ?)",
-            (telegram_id, full_name, phone, username)
+            "INSERT OR IGNORE INTO users (telegram_id, full_name, phone, username, created_at) VALUES (?, ?, ?, ?, ?)",
+            (telegram_id, full_name, phone, username, uz_now_str())
         )
         await db.commit()
         return cursor.lastrowid
@@ -301,6 +303,19 @@ async def add_brand(name: str) -> int:
         return cursor.lastrowid
 
 
+async def get_or_create_brand(name: str) -> int:
+    """Brendni nomi bo'yicha topadi yoki yaratadi (Excel import uchun)."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT id FROM brands WHERE name = ? COLLATE NOCASE", (name,))
+        row = await cur.fetchone()
+        if row:
+            return row["id"]
+        cur = await db.execute("INSERT INTO brands (name) VALUES (?)", (name,))
+        await db.commit()
+        return cur.lastrowid
+
+
 async def get_brands() -> list:
     async with aiosqlite.connect(DB_NAME) as db:
         db.row_factory = aiosqlite.Row
@@ -366,6 +381,24 @@ async def add_model(brand_id: int, name: str) -> int:
         )
         await db.commit()
         return cursor.lastrowid
+
+
+async def get_or_create_model(brand_id: int, name: str) -> int:
+    """Modelni topadi yoki yaratadi (Excel import uchun)."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT id FROM models WHERE brand_id = ? AND name = ? COLLATE NOCASE",
+            (brand_id, name)
+        )
+        row = await cur.fetchone()
+        if row:
+            return row["id"]
+        cur = await db.execute(
+            "INSERT INTO models (brand_id, name) VALUES (?, ?)", (brand_id, name)
+        )
+        await db.commit()
+        return cur.lastrowid
 
 
 async def get_models(brand_id: int) -> list:
@@ -471,12 +504,48 @@ async def add_product(category_id: int, model_id: Optional[int], name: str,
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute(
             """INSERT INTO products
-               (category_id, model_id, name, cost_price, price, quantity, min_quantity, description)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (category_id, model_id, name, cost_price, price, quantity, min_quantity, description)
+               (category_id, model_id, name, cost_price, price, quantity, min_quantity, description, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (category_id, model_id, name, cost_price, price, quantity, min_quantity, description, uz_now_str())
         )
         await db.commit()
         return cursor.lastrowid
+
+
+async def upsert_product(category_id: int, model_id: Optional[int], name: str,
+                         cost_price: float, price: float, quantity: int,
+                         min_quantity: int, description: str = "") -> str:
+    """Excel import uchun: bir xil (kategoriya+model+nom) bo'lsa yangilaydi, bo'lmasa qo'shadi.
+    Qaytaradi: 'added' yoki 'updated'."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        if model_id is None:
+            cur = await db.execute(
+                "SELECT id FROM products WHERE category_id = ? AND model_id IS NULL AND name = ? COLLATE NOCASE",
+                (category_id, name)
+            )
+        else:
+            cur = await db.execute(
+                "SELECT id FROM products WHERE category_id = ? AND model_id = ? AND name = ? COLLATE NOCASE",
+                (category_id, model_id, name)
+            )
+        row = await cur.fetchone()
+        if row:
+            await db.execute(
+                """UPDATE products SET cost_price = ?, price = ?, quantity = ?,
+                   min_quantity = ?, description = ? WHERE id = ?""",
+                (cost_price, price, quantity, min_quantity, description, row["id"])
+            )
+            await db.commit()
+            return "updated"
+        await db.execute(
+            """INSERT INTO products
+               (category_id, model_id, name, cost_price, price, quantity, min_quantity, description, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (category_id, model_id, name, cost_price, price, quantity, min_quantity, description, uz_now_str())
+        )
+        await db.commit()
+        return "added"
 
 
 async def get_product(product_id: int) -> Optional[dict]:
@@ -621,10 +690,10 @@ async def add_order(user_id: int, product_id: int, quantity: int, total_price: f
         cursor = await db.execute(
             """INSERT INTO orders
                (user_id, product_id, screen_id, quantity, total_price, cost_at_sale,
-                payment_method, pickup_type, payment_status, paid_amount)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                payment_method, pickup_type, payment_status, paid_amount, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (user_id, product_id, product_id, quantity, total_price, cost_at_sale,
-             payment_method, pickup_type, payment_status, paid_amount)
+             payment_method, pickup_type, payment_status, paid_amount, uz_now_str())
         )
         await db.commit()
         return cursor.lastrowid

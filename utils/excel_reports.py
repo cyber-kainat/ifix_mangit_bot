@@ -5,6 +5,7 @@ import os
 import tempfile
 from datetime import datetime
 from openpyxl import Workbook
+from config import uz_now
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
@@ -37,7 +38,7 @@ def _autosize(ws, min_width=10, max_width=42):
 
 
 def _temp_path(prefix: str) -> str:
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts = uz_now().strftime("%Y%m%d_%H%M%S")
     return os.path.join(tempfile.gettempdir(), f"{prefix}_{ts}.xlsx")
 
 
@@ -64,7 +65,7 @@ def generate_low_stock_report(products: list) -> str:
     ws.row_dimensions[1].height = 28
 
     ws.merge_cells("A2:G2")
-    ws["A2"] = f"Sana: {datetime.now().strftime('%d.%m.%Y %H:%M')}   |   Manzil: Amudaryo tumani, Mangit shahri"
+    ws["A2"] = f"Sana: {uz_now().strftime('%d.%m.%Y %H:%M')}   |   Manzil: Amudaryo tumani, Mangit shahri"
     ws["A2"].alignment = Alignment(horizontal="center")
     ws["A2"].font = Font(italic=True, color="555555")
 

@@ -3,7 +3,17 @@ Asosiy fayl - Botni ishga tushirish
 """
 import asyncio
 import logging
+import os
 import sys
+import time
+
+# Server vaqtini O'zbekiston (Toshkent, UTC+5) ga o'rnatamiz.
+# Railway UTC da ishlaydi — bularsiz vaqt 5 soat kam ko'rsatardi.
+os.environ["TZ"] = "Asia/Tashkent"
+try:
+    time.tzset()
+except AttributeError:
+    pass  # Windows tzset ni qo'llab-quvvatlamaydi
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties

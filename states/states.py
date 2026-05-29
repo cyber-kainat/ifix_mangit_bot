@@ -59,6 +59,9 @@ class AdminStates(StatesGroup):
     # Bazani tiklash (restore)
     waiting_restore_file = State()
 
+    # Excel import
+    waiting_import_file = State()
+
 
 class SalesReportStates(StatesGroup):
     """Sotuv hisoboti uchun sana oralig'i"""

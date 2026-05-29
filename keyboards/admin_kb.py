@@ -27,6 +27,7 @@ def get_products_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="➕ Brend qo'shish", callback_data="admin_add_brand")],
         [InlineKeyboardButton(text="➕ Model qo'shish", callback_data="admin_add_model")],
         [InlineKeyboardButton(text="➕ Mahsulot qo'shish", callback_data="admin_add_product")],
+        [InlineKeyboardButton(text="📥 Excel'dan import", callback_data="admin_import")],
         [InlineKeyboardButton(text="✏️ Mahsulotni tahrirlash", callback_data="admin_edit_product")],
         [InlineKeyboardButton(text="🗂 Brend / Model boshqarish", callback_data="mng_brands")],
         [InlineKeyboardButton(text="📋 Brendlar ro'yxati", callback_data="admin_list_brands")]

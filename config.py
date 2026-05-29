@@ -3,7 +3,23 @@ Bot konfiguratsiyasi
 """
 import os
 from dataclasses import dataclass, field
+from datetime import datetime, timezone, timedelta
 from typing import List
+
+
+# O'zbekiston vaqti (UTC+5, yozgi vaqt yo'q — doimiy).
+# Railway serveri UTC da ishlaydi, shuning uchun barcha vaqtni shu funksiya orqali olamiz.
+UZ_TZ = timezone(timedelta(hours=5))
+
+
+def uz_now() -> datetime:
+    """O'zbekiston (Toshkent) vaqti bo'yicha hozirgi datetime."""
+    return datetime.now(UZ_TZ)
+
+
+def uz_now_str() -> str:
+    """SQLite created_at uchun 'YYYY-MM-DD HH:MM:SS' formatdagi O'zbekiston vaqti."""
+    return uz_now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 @dataclass

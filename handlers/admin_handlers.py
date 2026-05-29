@@ -3,11 +3,12 @@ Admin paneli handlerlari
 Yangilangan: sotuv hisoboti, qarz boshqaruvi, kategoriyalar, Excel eksport
 """
 import os
+import tempfile
 import aiosqlite
 from datetime import datetime, timedelta, date
 from aiogram import Router, F, Bot
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, FSInputFile
+from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 
 from database import db
@@ -25,8 +26,9 @@ from keyboards.admin_kb import (
 )
 from keyboards.user_kb import get_main_menu
 from states import AdminStates, SalesReportStates, DebtStates
-from config import config
+from config import config, uz_now
 from utils.excel_reports import generate_low_stock_report, generate_sales_report
+from utils.excel_import import generate_template, parse_import_file
 
 router = Router()
 
@@ -102,7 +104,7 @@ PERIOD_NAMES = {
 
 def _date_range(period: str):
     """period nomidan (date_from, date_to) qaytaradi (YYYY-MM-DD)"""
-    today = date.today()
+    today = uz_now().date()
     if period == "today":
         return today.isoformat(), today.isoformat()
     if period == "yesterday":
@@ -692,6 +694,156 @@ async def products_menu(message: Message):
         parse_mode="HTML",
         reply_markup=get_products_menu()
     )
+
+
+# === EXCEL IMPORT ===
+
+def _to_number(v):
+    if v is None or v == "":
+        return None
+    try:
+        return float(str(v).replace(" ", "").replace(",", ""))
+    except (ValueError, TypeError):
+        return None
+
+
+def _to_int(v):
+    n = _to_number(v)
+    return int(n) if n is not None else None
+
+
+@router.callback_query(F.data == "admin_import")
+async def import_start(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    await state.set_state(AdminStates.waiting_import_file)
+    await callback.message.edit_text(
+        "📥 <b>Excel orqali import</b>\n\n"
+        "1️⃣ Pastdagi tugmadan shablonni yuklab oling\n"
+        "2️⃣ Uni mahsulotlaringiz bilan to'ldiring\n"
+        "3️⃣ To'ldirilgan <code>.xlsx</code> faylni shu yerga yuboring\n\n"
+        "<i>Bir xil mahsulot bo'lsa — yangilanadi, takror qo'shilmaydi.\n"
+        "Yangi brend/model avtomatik yaratiladi.</i>\n\n"
+        "Bekor qilish: /admin",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📄 Shablonni yuklab olish", callback_data="import_template")],
+            [InlineKeyboardButton(text="❌ Bekor", callback_data="admin_cancel")]
+        ])
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "import_template")
+async def import_template(callback: CallbackQuery, bot: Bot):
+    if not is_admin(callback.from_user.id):
+        return
+    await callback.answer("📄 Shablon tayyorlanmoqda...")
+    path = generate_template()
+    await bot.send_document(
+        callback.from_user.id,
+        FSInputFile(path, filename="import_shablon.xlsx"),
+        caption="📄 Shablonni to'ldirib, shu yerga (xabar sifatida) yuboring."
+    )
+
+
+@router.message(AdminStates.waiting_import_file, F.document)
+async def import_file(message: Message, state: FSMContext, bot: Bot):
+    if not is_admin(message.from_user.id):
+        return
+
+    doc = message.document
+    if not doc.file_name.lower().endswith((".xlsx", ".xlsm")):
+        await message.answer("❌ Faqat <code>.xlsx</code> fayl yuboring (shablon kabi).", parse_mode="HTML")
+        return
+
+    tmp_path = os.path.join(tempfile.gettempdir(), f"import_{message.from_user.id}.xlsx")
+    try:
+        file = await bot.get_file(doc.file_id)
+        await bot.download_file(file.file_path, destination=tmp_path)
+    except Exception as e:
+        await message.answer(f"❌ Faylni yuklab bo'lmadi: {e}")
+        return
+
+    rows, fatal = parse_import_file(tmp_path)
+    try:
+        os.remove(tmp_path)
+    except OSError:
+        pass
+
+    if fatal:
+        await message.answer(f"❌ {fatal}", parse_mode="HTML")
+        return
+    if not rows:
+        await message.answer("⚠️ Faylda mahsulot topilmadi.")
+        return
+
+    await message.answer(f"⏳ {len(rows)} ta qator qayta ishlanmoqda...")
+
+    cats = await db.get_categories()
+    catmap = {c["name"].lower(): c for c in cats}
+
+    added = updated = skipped = 0
+    errors = []
+
+    for r in rows:
+        cval = str(r["category"]).strip() if r["category"] else ""
+        cat = catmap.get(cval.lower())
+        if not cat:
+            skipped += 1
+            errors.append(f"{r['row']}-qator: kategoriya '{cval}' noto'g'ri")
+            continue
+
+        name = str(r["name"]).strip() if r["name"] else ""
+        if not name:
+            skipped += 1
+            errors.append(f"{r['row']}-qator: nomi bo'sh")
+            continue
+
+        price = _to_number(r["price"])
+        if price is None or price <= 0:
+            skipped += 1
+            errors.append(f"{r['row']}-qator: narx noto'g'ri")
+            continue
+
+        cost = _to_number(r["cost"]) or 0
+        qty = _to_int(r["quantity"]) or 0
+        minq = _to_int(r["min"])
+        if minq is None:
+            minq = 3
+        desc = str(r["description"]).strip() if r["description"] else ""
+
+        model_id = None
+        if cat["requires_model"]:
+            bval = str(r["brand"]).strip() if r["brand"] else ""
+            mval = str(r["model"]).strip() if r["model"] else ""
+            if not bval or not mval:
+                skipped += 1
+                errors.append(f"{r['row']}-qator: {cat['name']} uchun brend va model shart")
+                continue
+            brand_id = await db.get_or_create_brand(bval)
+            model_id = await db.get_or_create_model(brand_id, mval)
+
+        res = await db.upsert_product(cat["id"], model_id, name, cost, price, qty, minq, desc)
+        if res == "added":
+            added += 1
+        else:
+            updated += 1
+
+    await state.clear()
+
+    report = (
+        f"✅ <b>Import yakunlandi!</b>\n\n"
+        f"➕ Qo'shildi: <b>{added}</b>\n"
+        f"♻️ Yangilandi: <b>{updated}</b>\n"
+        f"⚠️ O'tkazib yuborildi: <b>{skipped}</b>"
+    )
+    if errors:
+        report += "\n\n<b>Xatolar:</b>\n" + "\n".join(errors[:15])
+        if len(errors) > 15:
+            report += f"\n... yana {len(errors) - 15} ta"
+
+    await message.answer(report, parse_mode="HTML", reply_markup=get_admin_menu())
 
 
 # === BREND QO'SHISH ===
@@ -1648,12 +1800,12 @@ async def backup_db(message: Message, bot: Bot):
         await message.answer("❌ Baza fayli topilmadi.")
         return
 
-    ts = datetime.now().strftime("%Y%m%d_%H%M")
+    ts = uz_now().strftime("%Y%m%d_%H%M")
     await message.answer_document(
         FSInputFile(db.DB_NAME, filename=f"shop_backup_{ts}.db"),
         caption=(
             f"💾 <b>Baza zaxira nusxasi</b>\n"
-            f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
+            f"📅 {uz_now().strftime('%d.%m.%Y %H:%M')}\n\n"
             f"⚠️ Bu faylni saqlab qo'ying! Boshqa serverga ko'chganda yoki "
             f"baza buzilganda <b>♻️ Restore</b> orqali shu fayldan tiklaysiz."
         ),
