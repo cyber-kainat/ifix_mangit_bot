@@ -72,3 +72,9 @@ class SalesReportStates(StatesGroup):
 class DebtStates(StatesGroup):
     """Qarz to'lash"""
     waiting_payment_amount = State()
+
+
+class SellStates(StatesGroup):
+    """Admin qo'lda tezkor sotuv (do'kondan naqd)"""
+    waiting_quantity = State()
+    confirming = State()

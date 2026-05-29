@@ -14,6 +14,10 @@ from config import uz_now_str
 # Lokal ishlatishda standart "shop.db".
 DB_NAME = os.getenv("DB_NAME", "shop.db")
 
+# Do'kondan naqd sotilgan (botsiz) savdolar shu maxsus "mijoz" ostida qayd etiladi.
+# Telegram ID lar bunchalik kichik bo'lmaydi, shuning uchun to'qnashmaydi.
+WALKIN_TG_ID = 1
+
 
 # Standart kategoriyalar (init paytida bazaga qo'shiladi)
 DEFAULT_CATEGORIES = [
@@ -270,7 +274,10 @@ async def get_pending_users() -> list:
 async def get_all_users() -> list:
     async with aiosqlite.connect(DB_NAME) as db:
         db.row_factory = aiosqlite.Row
-        cursor = await db.execute("SELECT * FROM users ORDER BY created_at DESC")
+        cursor = await db.execute(
+            "SELECT * FROM users WHERE telegram_id != ? ORDER BY created_at DESC",
+            (WALKIN_TG_ID,)
+        )
         return [dict(row) for row in await cursor.fetchall()]
 
 
@@ -765,6 +772,54 @@ async def update_order_status(order_id: int, status: str):
         await db.commit()
 
 
+async def get_or_create_walkin_user() -> int:
+    """Do'kondan naqd sotilgan savdolar uchun maxsus 'mijoz' (bir marta yaratiladi)."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT id FROM users WHERE telegram_id = ?", (WALKIN_TG_ID,))
+        row = await cur.fetchone()
+        if row:
+            return row["id"]
+        cur = await db.execute(
+            """INSERT INTO users (telegram_id, full_name, phone, username, is_approved, created_at)
+               VALUES (?, ?, ?, ?, 1, ?)""",
+            (WALKIN_TG_ID, "🏪 Do'kon (naqd savdo)", "-", None, uz_now_str())
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def add_manual_sale(product_id: int, quantity: int) -> dict:
+    """Admin qo'lda sotuvni qayd etadi: skladdan ayiradi + hisobotga 'yakunlangan naqd savdo' sifatida yozadi.
+    Qaytaradi: {'order_id','total','profit','remaining'} yoki {'error':...}"""
+    product = await get_product(product_id)
+    if not product:
+        return {"error": "topilmadi"}
+    if product["quantity"] < quantity:
+        return {"error": "stock", "available": product["quantity"]}
+
+    user_id = await get_or_create_walkin_user()
+    total = float(product["price"]) * quantity
+    cost = float(product["cost_price"]) * quantity
+
+    order_id = await add_order(
+        user_id=user_id, product_id=product_id, quantity=quantity,
+        total_price=total, cost_at_sale=cost,
+        payment_method="naqd", pickup_type="shop",
+        payment_status="paid", paid_amount=total,
+    )
+    # Qo'lda sotuv darhol yakunlangan hisoblanadi (kutilayotgan buyurtmalar ro'yxatiga tushmaydi)
+    await update_order_status(order_id, "yakunlandi")
+    await update_product_quantity(product_id, product["quantity"] - quantity)
+
+    return {
+        "order_id": order_id,
+        "total": total,
+        "profit": total - cost,
+        "remaining": product["quantity"] - quantity,
+    }
+
+
 # ============ QARZ FUNKSIYALARI ============
 
 async def get_user_debts(user_id: int) -> list:
@@ -869,10 +924,13 @@ async def get_statistics() -> dict:
         db.row_factory = aiosqlite.Row
         stats = {}
 
-        cursor = await db.execute("SELECT COUNT(*) as cnt FROM users")
+        cursor = await db.execute("SELECT COUNT(*) as cnt FROM users WHERE telegram_id != ?", (WALKIN_TG_ID,))
         stats['total_users'] = (await cursor.fetchone())['cnt']
 
-        cursor = await db.execute("SELECT COUNT(*) as cnt FROM users WHERE is_approved = 1")
+        cursor = await db.execute(
+            "SELECT COUNT(*) as cnt FROM users WHERE is_approved = 1 AND telegram_id != ?",
+            (WALKIN_TG_ID,)
+        )
         stats['approved_users'] = (await cursor.fetchone())['cnt']
 
         cursor = await db.execute("SELECT COUNT(*) as cnt FROM users WHERE is_approved = 0 AND is_blocked = 0")

@@ -20,12 +20,12 @@ from keyboards.admin_kb import (
     get_user_action_keyboard, get_order_admin_keyboard,
     get_sales_period_keyboard, get_sales_report_actions,
     get_debtors_keyboard, get_debt_actions_keyboard, get_debt_orders_keyboard,
-    get_low_stock_keyboard,
+    get_low_stock_keyboard, get_sell_confirm_kb,
     get_manage_brands_kb, get_brand_manage_kb, get_brand_delete_confirm_kb,
     get_manage_models_kb, get_model_manage_kb, get_model_delete_confirm_kb
 )
 from keyboards.user_kb import get_main_menu
-from states import AdminStates, SalesReportStates, DebtStates
+from states import AdminStates, SalesReportStates, DebtStates, SellStates
 from config import config, uz_now
 from utils.excel_reports import generate_low_stock_report, generate_sales_report
 from utils.excel_import import generate_template, parse_import_file
@@ -844,6 +844,195 @@ async def import_file(message: Message, state: FSMContext, bot: Bot):
             report += f"\n... yana {len(errors) - 15} ta"
 
     await message.answer(report, parse_mode="HTML", reply_markup=get_admin_menu())
+
+
+# ============ TEZKOR SOTUV (do'kondan naqd, qo'lda qayd etish) ============
+
+def _product_title(product: dict) -> str:
+    title = product["name"]
+    if product.get("model_name"):
+        title = f"{product.get('brand_name','')} {product['model_name']} — {product['name']}"
+    return title
+
+
+@router.message(F.text == "🧾 Tezkor sotuv")
+async def sell_start(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    await state.clear()
+    cats = await db.get_categories()
+    await message.answer(
+        "🧾 <b>Tezkor sotuv</b> (do'kondan naqd, botsiz)\n\n"
+        "Bu sotuv skladdan ayiriladi va hisobotga qo'shiladi.\n\n"
+        "Kategoriyani tanlang:",
+        parse_mode="HTML",
+        reply_markup=get_categories_admin_keyboard(cats, action="sellcat")
+    )
+
+
+@router.callback_query(F.data.startswith("admin_sellcat_cat_"))
+async def sell_select_category(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    cat_id = int(callback.data.split("_")[3])
+    cat = await db.get_category(cat_id)
+    await state.update_data(sell_category=cat_id)
+
+    if not cat["requires_model"]:
+        products = await db.get_universal_products(cat_id)
+        if not products:
+            await callback.answer("Bu bo'limda mahsulot yo'q", show_alert=True)
+            return
+        await callback.message.edit_text(
+            f"{cat['icon']} <b>{cat['name']}</b>\n\nMahsulotni tanlang:",
+            parse_mode="HTML",
+            reply_markup=get_products_admin_keyboard(products, action="sell")
+        )
+        await callback.answer()
+        return
+
+    brands = await db.get_brands_with_products(cat_id)
+    if not brands:
+        await callback.answer("Bu kategoriyada mahsulot yo'q", show_alert=True)
+        return
+    await callback.message.edit_text(
+        f"{cat['icon']} <b>{cat['name']}</b>\n\nBrendni tanlang:",
+        parse_mode="HTML",
+        reply_markup=get_brands_admin_keyboard(brands, action="sellbrand")
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_sellbrand_brand_"))
+async def sell_select_brand(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    brand_id = int(callback.data.split("_")[3])
+    data = await state.get_data()
+    cat_id = data.get("sell_category")
+    models = await db.get_models_with_products(brand_id, cat_id)
+    if not models:
+        await callback.answer("Model yo'q", show_alert=True)
+        return
+    brand = await db.get_brand(brand_id)
+    await callback.message.edit_text(
+        f"📱 <b>{brand['name']}</b>\n\nModelni tanlang:",
+        parse_mode="HTML",
+        reply_markup=get_models_admin_keyboard(models, action="sellmodel")
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_sellmodel_model_"))
+async def sell_select_model(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    model_id = int(callback.data.split("_")[3])
+    data = await state.get_data()
+    cat_id = data.get("sell_category")
+    products = await db.get_products_by_model(model_id, cat_id)
+    if not products:
+        await callback.answer("Mahsulot yo'q", show_alert=True)
+        return
+    model = await db.get_model(model_id)
+    await callback.message.edit_text(
+        f"📱 <b>{model['brand_name']} {model['name']}</b>\n\nMahsulotni tanlang:",
+        parse_mode="HTML",
+        reply_markup=get_products_admin_keyboard(products, action="sell")
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_sell_prod_"))
+async def sell_select_product(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    product_id = int(callback.data.split("_")[3])
+    product = await db.get_product(product_id)
+    if not product:
+        await callback.answer("Topilmadi", show_alert=True)
+        return
+    if product["quantity"] <= 0:
+        await callback.answer("❌ Bu mahsulot tugagan!", show_alert=True)
+        return
+
+    await state.update_data(sell_product_id=product_id)
+    await state.set_state(SellStates.waiting_quantity)
+    await callback.message.edit_text(
+        f"{product.get('category_icon','📦')} <b>{_product_title(product)}</b>\n"
+        f"💰 Narx: {int(product['price']):,} so'm\n"
+        f"📦 Mavjud: {product['quantity']} dona\n\n"
+        f"<b>Nechta dona sotildi?</b> Raqam kiriting:\n"
+        f"<i>Bekor qilish: /admin</i>",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.message(SellStates.waiting_quantity, F.text)
+async def sell_enter_quantity(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    try:
+        qty = int(message.text.strip())
+        if qty <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Musbat butun son kiriting (yoki /admin):")
+        return
+
+    data = await state.get_data()
+    product = await db.get_product(data.get("sell_product_id"))
+    if not product:
+        await state.clear()
+        await message.answer("❌ Mahsulot topilmadi.", reply_markup=get_admin_menu())
+        return
+    if qty > product["quantity"]:
+        await message.answer(f"❌ Omborda faqat {product['quantity']} dona bor. Kamroq kiriting:")
+        return
+
+    total = float(product["price"]) * qty
+    profit = (float(product["price"]) - float(product["cost_price"])) * qty
+    await state.update_data(sell_quantity=qty)
+    await state.set_state(SellStates.confirming)
+    await message.answer(
+        f"🧾 <b>Sotuvni tasdiqlang:</b>\n\n"
+        f"{product.get('category_icon','📦')} {_product_title(product)}\n"
+        f"📦 Miqdor: <b>{qty} dona</b>\n"
+        f"💰 Summa: <b>{int(total):,} so'm</b>\n"
+        f"📈 Foyda: <b>{int(profit):,} so'm</b>\n"
+        f"📦 Sotuvdan keyin qoladi: <b>{product['quantity'] - qty} dona</b>",
+        parse_mode="HTML",
+        reply_markup=get_sell_confirm_kb()
+    )
+
+
+@router.callback_query(F.data == "sell_confirm", SellStates.confirming)
+async def sell_do_confirm(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    data = await state.get_data()
+    res = await db.add_manual_sale(data.get("sell_product_id"), data.get("sell_quantity"))
+    await state.clear()
+
+    if res.get("error") == "stock":
+        await callback.message.edit_text(
+            f"❌ Omborda yetarli emas (faqat {res['available']} dona). Sotuv bekor qilindi."
+        )
+    elif res.get("error"):
+        await callback.message.edit_text("❌ Xato: mahsulot topilmadi.")
+    else:
+        await callback.message.edit_text(
+            f"✅ <b>Sotuv qayd etildi!</b>\n\n"
+            f"🆔 #{res['order_id']}\n"
+            f"💰 Summa: <b>{int(res['total']):,} so'm</b>\n"
+            f"📈 Foyda: <b>{int(res['profit']):,} so'm</b>\n"
+            f"📦 Omborda qoldi: <b>{res['remaining']} dona</b>\n\n"
+            f"<i>Hisobot va statistikaga qo'shildi.</i>",
+            parse_mode="HTML"
+        )
+    await callback.answer()
+    await callback.message.answer("Admin paneli:", reply_markup=get_admin_menu())
 
 
 # === BREND QO'SHISH ===

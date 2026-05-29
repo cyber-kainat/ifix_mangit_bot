@@ -12,10 +12,11 @@ def get_admin_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📊 Statistika"), KeyboardButton(text="💰 Sotuv")],
+            [KeyboardButton(text="🧾 Tezkor sotuv"), KeyboardButton(text="🛍 Buyurtmalar")],
             [KeyboardButton(text="👥 Ustalar"), KeyboardButton(text="💳 Qarzlar")],
-            [KeyboardButton(text="📦 Mahsulotlar"), KeyboardButton(text="🛍 Buyurtmalar")],
-            [KeyboardButton(text="📉 Tugab qolganlar"), KeyboardButton(text="💾 Backup")],
-            [KeyboardButton(text="♻️ Restore"), KeyboardButton(text="🔙 Asosiy menyuga")]
+            [KeyboardButton(text="📦 Mahsulotlar"), KeyboardButton(text="📉 Tugab qolganlar")],
+            [KeyboardButton(text="💾 Backup"), KeyboardButton(text="♻️ Restore")],
+            [KeyboardButton(text="🔙 Asosiy menyuga")]
         ],
         resize_keyboard=True
     )
@@ -276,6 +277,14 @@ def get_debt_orders_keyboard(orders: list) -> InlineKeyboardMarkup:
 
 
 # ============ TUGAB QOLAYOTGAN MAHSULOTLAR ============
+
+def get_sell_confirm_kb() -> InlineKeyboardMarkup:
+    """Qo'lda sotuvni tasdiqlash"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Ha, sotildi", callback_data="sell_confirm")],
+        [InlineKeyboardButton(text="❌ Bekor", callback_data="admin_cancel")]
+    ])
+
 
 def get_low_stock_keyboard() -> InlineKeyboardMarkup:
     """Tugab qolayotgan mahsulotlar bo'limi"""

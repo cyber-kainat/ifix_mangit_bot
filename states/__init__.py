@@ -1,1 +1,1 @@
-from .states import RegisterStates, OrderStates, AdminStates, SalesReportStates, DebtStates
+from .states import RegisterStates, OrderStates, AdminStates, SalesReportStates, DebtStates, SellStates
