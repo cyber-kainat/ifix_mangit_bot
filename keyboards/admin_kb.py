@@ -14,7 +14,8 @@ def get_admin_menu() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="📊 Statistika"), KeyboardButton(text="💰 Sotuv")],
             [KeyboardButton(text="👥 Ustalar"), KeyboardButton(text="💳 Qarzlar")],
             [KeyboardButton(text="📦 Mahsulotlar"), KeyboardButton(text="🛍 Buyurtmalar")],
-            [KeyboardButton(text="📉 Tugab qolganlar"), KeyboardButton(text="🔙 Asosiy menyuga")]
+            [KeyboardButton(text="📉 Tugab qolganlar"), KeyboardButton(text="💾 Backup")],
+            [KeyboardButton(text="♻️ Restore"), KeyboardButton(text="🔙 Asosiy menyuga")]
         ],
         resize_keyboard=True
     )

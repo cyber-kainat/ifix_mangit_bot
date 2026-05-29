@@ -50,6 +50,9 @@ class AdminStates(StatesGroup):
     waiting_new_quantity = State()
     waiting_new_min_qty = State()
 
+    # Bazani tiklash (restore)
+    waiting_restore_file = State()
+
 
 class SalesReportStates(StatesGroup):
     """Sotuv hisoboti uchun sana oralig'i"""

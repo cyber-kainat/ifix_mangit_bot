@@ -2,6 +2,8 @@
 Admin paneli handlerlari
 Yangilangan: sotuv hisoboti, qarz boshqaruvi, kategoriyalar, Excel eksport
 """
+import os
+import aiosqlite
 from datetime import datetime, timedelta, date
 from aiogram import Router, F, Bot
 from aiogram.filters import Command
@@ -1374,6 +1376,114 @@ async def complete_order_admin(callback: CallbackQuery, bot: Bot):
     except Exception:
         pass
     await callback.answer("🎉 Yakunlandi")
+
+
+# ============ BACKUP / RESTORE ============
+
+@router.message(F.text == "💾 Backup")
+async def backup_db(message: Message, bot: Bot):
+    """Bazani .db fayl sifatida adminning Telegram'iga yuboradi."""
+    if not is_admin(message.from_user.id):
+        return
+
+    if not os.path.exists(db.DB_NAME):
+        await message.answer("❌ Baza fayli topilmadi.")
+        return
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M")
+    await message.answer_document(
+        FSInputFile(db.DB_NAME, filename=f"shop_backup_{ts}.db"),
+        caption=(
+            f"💾 <b>Baza zaxira nusxasi</b>\n"
+            f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
+            f"⚠️ Bu faylni saqlab qo'ying! Boshqa serverga ko'chganda yoki "
+            f"baza buzilganda <b>♻️ Restore</b> orqali shu fayldan tiklaysiz."
+        ),
+        parse_mode="HTML"
+    )
+
+
+@router.message(F.text == "♻️ Restore")
+async def restore_start(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    await state.set_state(AdminStates.waiting_restore_file)
+    await message.answer(
+        "♻️ <b>Bazani tiklash</b>\n\n"
+        "⚠️ <b>Diqqat:</b> hozirgi baza to'liq almashtiriladi "
+        "(barcha hozirgi ma'lumotlar backup bilan almashadi)!\n\n"
+        "Backup <code>.db</code> faylni shu yerga yuboring.\n"
+        "Bekor qilish uchun: /admin",
+        parse_mode="HTML"
+    )
+
+
+@router.message(AdminStates.waiting_restore_file, F.document)
+async def restore_file(message: Message, state: FSMContext, bot: Bot):
+    if not is_admin(message.from_user.id):
+        return
+
+    doc = message.document
+    if not doc.file_name.lower().endswith(".db"):
+        await message.answer("❌ Faqat <code>.db</code> fayl yuboring.", parse_mode="HTML")
+        return
+
+    # Vaqtinchalik faylga yuklab olamiz (xuddi shu papkada — atomik almashtirish uchun)
+    tmp_path = db.DB_NAME + ".restore_tmp"
+    try:
+        file = await bot.get_file(doc.file_id)
+        await bot.download_file(file.file_path, destination=tmp_path)
+    except Exception as e:
+        await message.answer(f"❌ Faylni yuklab bo'lmadi: {e}")
+        return
+
+    # Yuklangan fayl haqiqiy SQLite bazasimi — tekshiramiz
+    try:
+        async with aiosqlite.connect(tmp_path) as testdb:
+            cursor = await testdb.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+            tables = [r[0] for r in await cursor.fetchall()]
+        if "users" not in tables or "products" not in tables:
+            raise ValueError("kerakli jadvallar topilmadi")
+    except Exception as e:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        await message.answer(
+            f"❌ Yaroqsiz baza fayli: {e}\n\nTo'g'ri backup faylni yuboring.",
+            parse_mode="HTML"
+        )
+        return
+
+    # Almashtiramiz va migratsiyani qo'llaymiz
+    try:
+        os.replace(tmp_path, db.DB_NAME)
+        await db.init_db()  # eski backup bo'lsa ham sxemani yangilaydi
+    except Exception as e:
+        await message.answer(f"❌ Tiklashda xato: {e}")
+        return
+
+    await state.clear()
+    stats = await db.get_statistics()
+    await message.answer(
+        f"✅ <b>Baza muvaffaqiyatli tiklandi!</b>\n\n"
+        f"👥 Ustalar: {stats['total_users']}\n"
+        f"📦 Mahsulotlar: {stats['total_products']}\n"
+        f"🛒 Buyurtmalar: {stats['total_orders']}\n"
+        f"💳 Qarz: {int(stats['total_debt']):,} so'm",
+        parse_mode="HTML",
+        reply_markup=get_admin_menu()
+    )
+
+
+@router.message(AdminStates.waiting_restore_file)
+async def restore_wrong_input(message: Message):
+    """Restore kutilayotganda fayl emas, boshqa narsa yuborilsa."""
+    await message.answer(
+        "📎 Iltimos, backup <code>.db</code> faylni yuboring "
+        "(matn emas, fayl sifatida).\nBekor qilish: /admin",
+        parse_mode="HTML"
+    )
 
 
 # Asosiy menyuga qaytish
