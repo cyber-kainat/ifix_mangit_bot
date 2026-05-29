@@ -20,7 +20,7 @@ from config import config
 router = Router()
 
 
-PAYMENT_NAMES = {"naqd": "💵 Naqd", "click": "💳 Click", "payme": "💳 Payme"}
+PAYMENT_NAMES = {"naqd": "💵 Naqd", "plastik": "💳 Plastik"}
 PICKUP_NAMES = {"shop": "🏪 Do'kondan olib ketish", "delivery": "🚚 Yetkazib berish"}
 PSTATUS_NAMES = {
     "paid": "✅ To'liq to'lov",
@@ -450,10 +450,12 @@ def _build_confirmation_text(product: dict, data: dict) -> str:
 
     # To'lov tafsilotlari (qarzga olganda bunday emas)
     if data['paid_amount'] > 0:
-        if data['payment_method'] == "click":
-            text += f"\n💳 Click karta: <code>{config.CLICK_CARD}</code>\n👤 Egasi: {config.CLICK_OWNER}"
-        elif data['payment_method'] == "payme":
-            text += f"\n💳 Payme karta: <code>{config.PAYME_CARD}</code>\n👤 Egasi: {config.PAYME_OWNER}"
+        if data['payment_method'] == "plastik":
+            text += (
+                f"\n💳 Karta: <code>{config.CARD_NUMBER}</code>\n"
+                f"👤 Egasi: {config.CARD_OWNER}\n"
+                f"🧾 To'lovni amalga oshirib, tasdiqlagandan so'ng <b>chek rasmini</b> yuborasiz."
+            )
         elif data['payment_method'] == "naqd" and data['pickup_type'] == "shop":
             text += f"\n🏪 Manzil: {config.SHOP_ADDRESS}"
 
@@ -494,6 +496,9 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext, bot: Bot):
         title = f"{product.get('brand_name','')} {product['model_name']} — {product['name']}"
 
     debt = data['total'] - data.get('paid_amount', 0)
+    # Plastik to'lovda (qarz emas) chek rasmi talab qilinadi
+    needs_receipt = (data['payment_method'] == "plastik" and data.get('paid_amount', 0) > 0)
+
     msg = (
         f"✅ <b>Buyurtmangiz qabul qilindi!</b>\n\n"
         f"🆔 Buyurtma raqami: <b>#{order_id}</b>\n"
@@ -505,7 +510,17 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext, bot: Bot):
     )
     if debt > 0:
         msg += f"\n📒 <b>Qarz qoldi: {int(debt):,} so'm</b>\n"
-    msg += f"\n📞 Admin tez orada siz bilan bog'lanadi.\nAloqa: {config.SHOP_PHONE}"
+
+    if needs_receipt:
+        msg += (
+            f"\n💳 <b>Plastik to'lov uchun karta:</b>\n"
+            f"<code>{config.CARD_NUMBER}</code>\n"
+            f"👤 {config.CARD_OWNER}\n\n"
+            f"🧾 <b>To'lovni amalga oshirib, chek rasmini shu yerga yuboring.</b>\n"
+            f"Admin chekni ko'rib, buyurtmani tasdiqlaydi."
+        )
+    else:
+        msg += f"\n📞 Admin tez orada siz bilan bog'lanadi.\nAloqa: {config.SHOP_PHONE}"
 
     await callback.message.edit_text(msg, parse_mode="HTML")
 
@@ -524,6 +539,8 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext, bot: Bot):
     )
     if debt > 0:
         admin_text += f"\n⚠️ <b>QARZ: {int(debt):,} so'm</b>"
+    if needs_receipt:
+        admin_text += "\n🧾 <i>Usta to'lov chekini yuboradi (pastda keladi).</i>"
 
     for admin_id in config.ADMIN_IDS:
         try:
@@ -536,8 +553,85 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext, bot: Bot):
         except Exception as e:
             print(f"Admin xato: {e}")
 
-    await state.clear()
+    # Plastik to'lov bo'lsa — chek rasmini kutamiz, aks holda dialogni yopamiz
+    if needs_receipt:
+        await state.set_state(OrderStates.waiting_receipt)
+        await state.update_data(receipt_order_id=order_id, receipt_title=title)
+    else:
+        await state.clear()
     await callback.answer()
+
+
+# ============ CHEK RASMI (plastik to'lov) ============
+
+@router.message(OrderStates.waiting_receipt, F.photo)
+async def receive_receipt_photo(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    order_id = data.get('receipt_order_id')
+    title = data.get('receipt_title', f"#{order_id}")
+    user = await db.get_user(message.from_user.id)
+    file_id = message.photo[-1].file_id
+
+    caption = (
+        f"🧾 <b>To'lov cheki — Buyurtma #{order_id}</b>\n\n"
+        f"👤 {user['full_name'] if user else message.from_user.full_name}\n"
+        f"📱 {user['phone'] if user else ''}\n"
+        f"📦 {title}\n\n"
+        f"⬆️ Yuqoridagi buyurtma xabaridan tasdiqlang."
+    )
+
+    sent = False
+    for admin_id in config.ADMIN_IDS:
+        try:
+            await bot.send_photo(admin_id, file_id, caption=caption, parse_mode="HTML")
+            sent = True
+        except Exception as e:
+            print(f"Chek yuborishda xato: {e}")
+
+    await state.clear()
+    if sent:
+        await message.answer(
+            "✅ <b>Chek qabul qilindi!</b>\n\n"
+            "Admin to'lovni tekshirib, buyurtmangizni tasdiqlaydi.\n"
+            f"📞 {config.SHOP_PHONE}",
+            parse_mode="HTML",
+            reply_markup=get_main_menu()
+        )
+    else:
+        await message.answer(
+            "⚠️ Chekni yuborishda muammo bo'ldi. Iltimos admin bilan bog'laning:\n"
+            f"📞 {config.SHOP_PHONE}",
+            reply_markup=get_main_menu()
+        )
+
+
+@router.message(OrderStates.waiting_receipt, F.document)
+async def receive_receipt_doc(message: Message, state: FSMContext, bot: Bot):
+    """Chek fayl (rasm-fayl) sifatida yuborilsa"""
+    data = await state.get_data()
+    order_id = data.get('receipt_order_id')
+    title = data.get('receipt_title', f"#{order_id}")
+    user = await db.get_user(message.from_user.id)
+
+    caption = (
+        f"🧾 <b>To'lov cheki — Buyurtma #{order_id}</b>\n\n"
+        f"👤 {user['full_name'] if user else message.from_user.full_name}\n"
+        f"📱 {user['phone'] if user else ''}\n"
+        f"📦 {title}"
+    )
+    sent = False
+    for admin_id in config.ADMIN_IDS:
+        try:
+            await bot.send_document(admin_id, message.document.file_id, caption=caption, parse_mode="HTML")
+            sent = True
+        except Exception as e:
+            print(f"Chek yuborishda xato: {e}")
+
+    await state.clear()
+    await message.answer(
+        "✅ <b>Chek qabul qilindi!</b>\n\nAdmin tekshirib, buyurtmani tasdiqlaydi.",
+        parse_mode="HTML", reply_markup=get_main_menu()
+    )
 
 
 @router.callback_query(F.data == "cancel_order")

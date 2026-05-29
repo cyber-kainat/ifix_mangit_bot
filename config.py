@@ -18,15 +18,14 @@ class Config:
     # Ma'lumotlar bazasi yo'li (Railway Volume uchun env orqali "/data/shop.db")
     DB_NAME: str = os.getenv("DB_NAME", "shop.db")
     
-    # To'lov ma'lumotlari (Click va Payme uchun kartalar)
-    CLICK_CARD: str = "8600 1234 5678 9012"
-    CLICK_OWNER: str = "Aliyev Ali"
-    PAYME_CARD: str = "8600 9876 5432 1098"
-    PAYME_OWNER: str = "Aliyev Ali"
-    
-    # Do'kon manzili (naqd to'lov uchun)
-    SHOP_ADDRESS: str = "Toshkent sh., Chilonzor tumani, 1-mavze"
-    SHOP_PHONE: str = "+998 90 123 45 67"
+    # To'lov kartasi (plastik to'lov uchun yagona admin kartasi)
+    CARD_NUMBER: str = "9860 3501 4277 2812"
+    CARD_OWNER: str = "Hakimjon Otajonov"
+
+    # Do'kon ma'lumotlari
+    SHOP_ADDRESS: str = "Mangit shahri bozori, Orientr Xalq banki ro'parasi"
+    SHOP_PHONE: str = "+998 93 353 07 23"
+    SHOP_HOURS: str = "09:00 - 20:00 (Har kuni)"
 
 
 config = Config()

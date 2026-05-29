@@ -174,7 +174,7 @@ async def info_handler(message: Message):
         "🛒 <b>Katalog</b> - barcha mahsulotlarni ko'rish va buyurtma berish\n"
         "📋 <b>Buyurtmalarim</b> - o'zingizning buyurtmalaringiz tarixi\n"
         "📞 <b>Aloqa</b> - bog'lanish ma'lumotlari\n\n"
-        "💳 To'lov: Naqd / Click / Payme\n"
+        "💳 To'lov: Naqd / Plastik\n"
         f"🏪 Manzil: {config.SHOP_ADDRESS}",
         parse_mode="HTML"
     )
@@ -190,7 +190,7 @@ async def contact_handler(message: Message):
         "📞 <b>Bog'lanish</b>\n\n"
         f"☎️ Telefon: {config.SHOP_PHONE}\n"
         f"📍 Manzil: {config.SHOP_ADDRESS}\n\n"
-        "Ish vaqti: 09:00 - 19:00 (Dushanba-Shanba)",
+        f"🕒 Ish vaqti: {config.SHOP_HOURS}",
         parse_mode="HTML"
     )
 

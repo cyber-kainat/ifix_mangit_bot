@@ -22,6 +22,7 @@ class OrderStates(StatesGroup):
     selecting_payment_status = State()   # to'liq / qarz / qisman
     waiting_partial_amount = State()     # qisman to'lov summasi
     confirming = State()
+    waiting_receipt = State()            # plastik to'lov uchun chek rasmi
 
 
 class AdminStates(StatesGroup):

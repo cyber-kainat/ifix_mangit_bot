@@ -1522,7 +1522,7 @@ async def show_orders(message: Message):
         return
 
     text = f"🛍 <b>Kutilayotgan buyurtmalar ({len(orders)} ta):</b>\n\n"
-    payment_names = {"naqd": "💵 Naqd", "click": "💳 Click", "payme": "💳 Payme"}
+    payment_names = {"naqd": "💵 Naqd", "plastik": "💳 Plastik"}
     pickup_names = {"shop": "🏪 Do'kondan", "delivery": "🚚 Yetkazib berish"}
     pstatus_names = {"paid": "✅", "debt": "📒", "partial": "💰"}
 

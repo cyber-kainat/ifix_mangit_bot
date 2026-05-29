@@ -127,9 +127,8 @@ def get_quantity_keyboard(product_id: int, current: int = 1, max_qty: int = 1) -
 def get_payment_keyboard() -> InlineKeyboardMarkup:
     """To'lov usulini tanlash"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💵 Naqd pul", callback_data="pay_naqd")],
-        [InlineKeyboardButton(text="💳 Click", callback_data="pay_click")],
-        [InlineKeyboardButton(text="💳 Payme", callback_data="pay_payme")],
+        [InlineKeyboardButton(text="💵 Naqd", callback_data="pay_naqd")],
+        [InlineKeyboardButton(text="💳 Plastik (karta)", callback_data="pay_plastik")],
         [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_order")]
     ])
 
