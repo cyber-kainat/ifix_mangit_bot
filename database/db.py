@@ -140,6 +140,21 @@ async def init_db():
             )
         """)
 
+        # ---- Tovar qabul qilish (kirim) tarixi — o'rtacha tannarx audit uchun ----
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS stock_receipts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_id INTEGER,
+                quantity INTEGER NOT NULL,
+                unit_cost REAL NOT NULL,
+                total_cost REAL NOT NULL,
+                old_cost REAL,
+                new_cost REAL,
+                note TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         # ---- Migration: orders jadvaliga yangi ustunlar ----
         if not await _column_exists(db, "orders", "product_id"):
             await db.execute("ALTER TABLE orders ADD COLUMN product_id INTEGER")
@@ -685,6 +700,67 @@ async def get_low_stock_products(category_id: Optional[int] = None) -> list:
         query += " ORDER BY c.id, p.quantity ASC, b.name, m.name"
         cursor = await db.execute(query, params)
         return [dict(row) for row in await cursor.fetchall()]
+
+
+# ============ TOVAR QABUL QILISH (kirim + o'rtacha tannarx WAC) ============
+
+async def receive_stock(product_id: int, quantity: int, unit_cost: float, note: str = "") -> Optional[dict]:
+    """Yangi tovar kelganda: skladni oshiradi va tannarxni O'RTACHA (weighted average) qilib yangilaydi.
+
+    Yangi tannarx = (eski_dona*eski_tannarx + kelgan_dona*kelgan_narx) / (eski_dona + kelgan_dona)
+    Bu ikki do'kondan har xil narxda kelgan tovarlar aralashganda foydani to'g'ri chiqaradi.
+    """
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT quantity, cost_price FROM products WHERE id = ?", (product_id,)
+        )
+        row = await cur.fetchone()
+        if not row:
+            return None
+        cur_qty = int(row["quantity"] or 0)
+        cur_cost = float(row["cost_price"] or 0)
+        new_qty = cur_qty + quantity
+        if new_qty > 0:
+            new_cost = (cur_qty * cur_cost + quantity * unit_cost) / new_qty
+        else:
+            new_cost = unit_cost
+        new_cost = round(new_cost, 2)
+
+        await db.execute(
+            "UPDATE products SET quantity = ?, cost_price = ? WHERE id = ?",
+            (new_qty, new_cost, product_id)
+        )
+        await db.execute(
+            """INSERT INTO stock_receipts
+               (product_id, quantity, unit_cost, total_cost, old_cost, new_cost, note, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (product_id, quantity, unit_cost, unit_cost * quantity, cur_cost, new_cost, note, uz_now_str())
+        )
+        await db.commit()
+        return {
+            "old_qty": cur_qty, "new_qty": new_qty,
+            "old_cost": cur_cost, "new_cost": new_cost,
+            "unit_cost": unit_cost, "added": quantity,
+            "batch_total": unit_cost * quantity,
+        }
+
+
+async def get_recent_receipts(limit: int = 20) -> list:
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """SELECT r.*, p.name AS product_name, c.icon AS category_icon,
+                      m.name AS model_name, b.name AS brand_name
+               FROM stock_receipts r
+               LEFT JOIN products p ON r.product_id = p.id
+               LEFT JOIN categories c ON p.category_id = c.id
+               LEFT JOIN models m ON p.model_id = m.id
+               LEFT JOIN brands b ON m.brand_id = b.id
+               ORDER BY r.id DESC LIMIT ?""",
+            (limit,)
+        )
+        return [dict(r) for r in await cur.fetchall()]
 
 
 # ============ BUYURTMALAR ============

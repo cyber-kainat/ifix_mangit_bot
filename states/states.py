@@ -81,3 +81,10 @@ class SellStates(StatesGroup):
     waiting_other_name = State()
     choosing_payment = State()
     waiting_partial = State()
+
+
+class ReceiveStates(StatesGroup):
+    """Tovar qabul qilish (sklad to'ldirish + o'rtacha tannarx)"""
+    waiting_quantity = State()
+    waiting_unit_cost = State()
+    waiting_note = State()

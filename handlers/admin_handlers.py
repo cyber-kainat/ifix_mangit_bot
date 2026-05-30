@@ -26,7 +26,7 @@ from keyboards.admin_kb import (
     get_manage_models_kb, get_model_manage_kb, get_model_delete_confirm_kb
 )
 from keyboards.user_kb import get_main_menu
-from states import AdminStates, SalesReportStates, DebtStates, SellStates
+from states import AdminStates, SalesReportStates, DebtStates, SellStates, ReceiveStates
 from config import config, uz_now
 from utils.excel_reports import generate_low_stock_report, generate_sales_report
 from utils.excel_import import generate_template, parse_import_file
@@ -1151,6 +1151,218 @@ async def _finalize_sale_cb(callback: CallbackQuery, state: FSMContext, payment_
     await callback.message.edit_text(text, parse_mode="HTML")
     await callback.answer()
     await callback.message.answer("Admin paneli:", reply_markup=get_admin_menu())
+
+
+# === TOVAR QABUL QILISH (sklad to'ldirish + o'rtacha tannarx) ===
+
+@router.callback_query(F.data == "admin_receive")
+async def receive_start(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    await state.clear()
+    cats = await db.get_categories()
+    await callback.message.edit_text(
+        "📦 <b>Tovar qabul qilish</b>\n\n"
+        "Yangi kelgan tovar skladga qo'shiladi va tannarx <b>o'rtacha</b> qilib yangilanadi "
+        "(2 do'kondan har xil narx aralashganda foyda to'g'ri chiqadi).\n\n"
+        "Kategoriyani tanlang:",
+        parse_mode="HTML",
+        reply_markup=get_categories_admin_keyboard(cats, action="recvcat")
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_recvcat_cat_"))
+async def receive_select_category(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    cat_id = int(callback.data.split("_")[3])
+    cat = await db.get_category(cat_id)
+    await state.update_data(recv_category=cat_id)
+
+    if not cat["requires_model"]:
+        products = await db.get_universal_products(cat_id)
+        if not products:
+            await callback.answer("Bu bo'limda mahsulot yo'q", show_alert=True)
+            return
+        await callback.message.edit_text(
+            f"{cat['icon']} <b>{cat['name']}</b>\n\nQaysi mahsulot keldi?",
+            parse_mode="HTML",
+            reply_markup=get_products_admin_keyboard(products, action="recv")
+        )
+        await callback.answer()
+        return
+
+    brands = await db.get_brands_with_products(cat_id)
+    if not brands:
+        await callback.answer("Bu kategoriyada mahsulot yo'q", show_alert=True)
+        return
+    await callback.message.edit_text(
+        f"{cat['icon']} <b>{cat['name']}</b>\n\nBrendni tanlang:",
+        parse_mode="HTML",
+        reply_markup=get_brands_admin_keyboard(brands, action="recvbrand")
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_recvbrand_brand_"))
+async def receive_select_brand(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    brand_id = int(callback.data.split("_")[3])
+    data = await state.get_data()
+    models = await db.get_models_with_products(brand_id, data.get("recv_category"))
+    if not models:
+        await callback.answer("Model yo'q", show_alert=True)
+        return
+    brand = await db.get_brand(brand_id)
+    await callback.message.edit_text(
+        f"📱 <b>{brand['name']}</b>\n\nModelni tanlang:",
+        parse_mode="HTML",
+        reply_markup=get_models_admin_keyboard(models, action="recvmodel")
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_recvmodel_model_"))
+async def receive_select_model(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    model_id = int(callback.data.split("_")[3])
+    data = await state.get_data()
+    products = await db.get_products_by_model(model_id, data.get("recv_category"))
+    if not products:
+        await callback.answer("Mahsulot yo'q", show_alert=True)
+        return
+    model = await db.get_model(model_id)
+    await callback.message.edit_text(
+        f"📱 <b>{model['brand_name']} {model['name']}</b>\n\nQaysi mahsulot keldi?",
+        parse_mode="HTML",
+        reply_markup=get_products_admin_keyboard(products, action="recv")
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_recv_prod_"))
+async def receive_select_product(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    product_id = int(callback.data.split("_")[3])
+    product = await db.get_product(product_id)
+    if not product:
+        await callback.answer("Topilmadi", show_alert=True)
+        return
+    await state.update_data(recv_product_id=product_id)
+    await state.set_state(ReceiveStates.waiting_quantity)
+    await callback.message.edit_text(
+        f"{product.get('category_icon','📦')} <b>{_product_title(product)}</b>\n\n"
+        f"📦 Hozir omborda: <b>{product['quantity']} dona</b>\n"
+        f"🏷 Joriy o'rtacha tannarx: <b>{int(product['cost_price']):,} so'm</b>\n\n"
+        f"<b>Nechta dona keldi?</b> Raqam kiriting:\n<i>Bekor: /admin</i>",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.message(ReceiveStates.waiting_quantity, F.text)
+async def receive_enter_quantity(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    try:
+        qty = int(message.text.strip())
+        if qty <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Musbat butun son kiriting (yoki /admin):")
+        return
+    await state.update_data(recv_qty=qty)
+    await state.set_state(ReceiveStates.waiting_unit_cost)
+    await message.answer(
+        f"🏷 <b>Bittasining tannarxi qancha?</b>\n"
+        f"(Toshkentda 1 dona necha pulga olindi — so'mda):",
+        parse_mode="HTML"
+    )
+
+
+@router.message(ReceiveStates.waiting_unit_cost, F.text)
+async def receive_enter_cost(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    unit = _to_number(message.text)
+    if unit is None or unit < 0:
+        await message.answer("❌ Narx noto'g'ri. Faqat raqam kiriting:")
+        return
+    await state.update_data(recv_unit=unit)
+    await state.set_state(ReceiveStates.waiting_note)
+    await message.answer(
+        "✍️ Qaysi do'kondan kelgani (ixtiyoriy nom)?\n"
+        "<i>Kerak bo'lmasa '-' yuboring.</i>",
+        parse_mode="HTML"
+    )
+
+
+@router.message(ReceiveStates.waiting_note, F.text)
+async def receive_enter_note(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    note = message.text.strip()
+    if note == "-":
+        note = ""
+    if len(note) > 100:
+        await message.answer("❌ Juda uzun. Qisqaroq yoki '-':")
+        return
+
+    data = await state.get_data()
+    product_id = data.get("recv_product_id")
+    res = await db.receive_stock(product_id, data.get("recv_qty"), data.get("recv_unit"), note)
+    await state.clear()
+    if not res:
+        await message.answer("❌ Mahsulot topilmadi.", reply_markup=get_admin_menu())
+        return
+
+    product = await db.get_product(product_id)
+    note_line = f"\n🏬 Do'kon: {note}" if note else ""
+    await message.answer(
+        f"✅ <b>Tovar qabul qilindi!</b>\n\n"
+        f"{product.get('category_icon','📦')} {_product_title(product)}{note_line}\n\n"
+        f"➕ Qo'shildi: <b>{res['added']} dona</b> × {int(res['unit_cost']):,} = {int(res['batch_total']):,} so'm\n"
+        f"📦 Ombor: {res['old_qty']} → <b>{res['new_qty']} dona</b>\n"
+        f"🏷 O'rtacha tannarx: {int(res['old_cost']):,} → <b>{int(res['new_cost']):,} so'm</b>\n\n"
+        f"<i>Endi foyda shu o'rtacha tannarxdan to'g'ri hisoblanadi.</i>",
+        parse_mode="HTML",
+        reply_markup=get_admin_menu()
+    )
+
+
+@router.callback_query(F.data == "admin_receipts")
+async def receipts_history(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    rows = await db.get_recent_receipts(20)
+    if not rows:
+        await callback.message.edit_text("📭 Hali tovar qabul qilinmagan.")
+        await callback.answer()
+        return
+    text = "📋 <b>So'nggi kelgan tovarlar:</b>\n\n"
+    total_spent = 0
+    for r in rows:
+        pt = r.get("product_name", "?")
+        if r.get("brand_name") and r.get("model_name"):
+            pt = f"{r['brand_name']} {r['model_name']} — {pt}"
+        total_spent += float(r["total_cost"] or 0)
+        line = (
+            f"{r.get('category_icon','📦')} {pt}\n"
+            f"   +{r['quantity']} × {int(r['unit_cost']):,} = {int(r['total_cost']):,} so'm "
+            f"| {str(r['created_at'])[:16]}"
+        )
+        if r.get("note"):
+            line += f" | 🏬 {r['note']}"
+        text += line + "\n\n"
+    text += f"💸 <b>So'nggi {len(rows)} kirim summasi: {int(total_spent):,} so'm</b>"
+    if len(text) > 3900:
+        text = text[:3900] + "\n..."
+    await callback.message.edit_text(text, parse_mode="HTML")
+    await callback.answer()
 
 
 # === BREND QO'SHISH ===
