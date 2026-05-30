@@ -193,14 +193,60 @@ def get_user_action_keyboard(telegram_id: int, is_approved: bool, is_blocked: bo
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_order_admin_keyboard(order_id: int) -> InlineKeyboardMarkup:
-    """Buyurtmani boshqarish"""
+ORDER_STATUS_EMOJI = {"kutilmoqda": "⏳", "tasdiqlandi": "✅", "yakunlandi": "🎉", "bekor": "❌"}
+
+
+def get_group_actions_kb(group_id: str, status: str = None, with_back: bool = False) -> InlineKeyboardMarkup:
+    """Buyurtma guruhini boshqarish (yangi buyurtma xabarida va boshqaruvda)."""
+    rows = []
+    if status not in ("tasdiqlandi", "yakunlandi"):
+        rows.append([InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"ordconf_{group_id}")])
+    if status != "yakunlandi":
+        rows.append([InlineKeyboardButton(text="🎉 Yakunlash (hisobotga)", callback_data=f"ordcomp_{group_id}")])
+    rows.append([
+        InlineKeyboardButton(text="❌ Bekor", callback_data=f"ordcanc_{group_id}"),
+        InlineKeyboardButton(text="🗑 O'chirish", callback_data=f"orddel_{group_id}")
+    ])
+    if with_back:
+        rows.append([InlineKeyboardButton(text="⬅️ Ro'yxat", callback_data="ord_back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_orders_filter_kb() -> InlineKeyboardMarkup:
+    """Buyurtmalarni status bo'yicha filtr"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"order_confirm_{order_id}"),
-            InlineKeyboardButton(text="❌ Bekor qilish", callback_data=f"order_cancel_{order_id}")
+            InlineKeyboardButton(text="⏳ Kutilmoqda", callback_data="ordlist_kutilmoqda"),
+            InlineKeyboardButton(text="✅ Tasdiqlangan", callback_data="ordlist_tasdiqlandi")
         ],
-        [InlineKeyboardButton(text="🎉 Yakunlangan", callback_data=f"order_complete_{order_id}")]
+        [
+            InlineKeyboardButton(text="🎉 Yakunlangan", callback_data="ordlist_yakunlandi"),
+            InlineKeyboardButton(text="❌ Bekor qilingan", callback_data="ordlist_bekor")
+        ],
+        [InlineKeyboardButton(text="📋 Hammasi", callback_data="ordlist_all")],
+        [InlineKeyboardButton(text="❌ Yopish", callback_data="admin_cancel")]
+    ])
+
+
+def get_order_groups_kb(groups: list) -> InlineKeyboardMarkup:
+    """Buyurtma guruhlari ro'yxati"""
+    buttons = []
+    for g in groups[:25]:
+        emoji = ORDER_STATUS_EMOJI.get(g['status'], "📦")
+        buttons.append([InlineKeyboardButton(
+            text=f"{emoji} {g['full_name']} · {int(g['total']):,} so'm ({g['items']} ta)",
+            callback_data=f"ordgrp_{g['group_id']}"
+        )])
+    buttons.append([InlineKeyboardButton(text="⬅️ Filtr", callback_data="ord_back")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_group_delete_confirm_kb(group_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Ha, o'chirilsin", callback_data=f"orddelyes_{group_id}"),
+            InlineKeyboardButton(text="❌ Yo'q", callback_data=f"ordgrp_{group_id}")
+        ]
     ])
 
 

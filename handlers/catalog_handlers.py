@@ -1,7 +1,8 @@
 """
-Katalog ko'rish va buyurtma berish handlerlari
-Yangilangan: kategoriya tanlash + qarz/qisman to'lov
+Katalog, savat va buyurtma berish handlerlari
+Yangilangan: savat (bir nechta mahsulot) + guruh buyurtma + qarz/qisman to'lov
 """
+import uuid
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -11,9 +12,9 @@ from keyboards.user_kb import (
     get_categories_keyboard, get_brands_keyboard, get_models_keyboard,
     get_products_keyboard, get_quantity_keyboard, get_payment_keyboard,
     get_pickup_keyboard, get_payment_status_keyboard, get_confirm_keyboard,
-    get_main_menu
+    get_main_menu, get_added_to_cart_kb, get_cart_kb
 )
-from keyboards.admin_kb import get_order_admin_keyboard
+from keyboards.admin_kb import get_group_actions_kb
 from states import OrderStates
 from config import config
 
@@ -22,20 +23,28 @@ router = Router()
 
 PAYMENT_NAMES = {"naqd": "💵 Naqd", "plastik": "💳 Plastik"}
 PICKUP_NAMES = {"shop": "🏪 Do'kondan olib ketish", "delivery": "🚚 Yetkazib berish"}
-PSTATUS_NAMES = {
-    "paid": "✅ To'liq to'lov",
-    "debt": "📒 Qarz",
-    "partial": "💰 Qisman to'lov"
-}
+PSTATUS_NAMES = {"paid": "✅ To'liq to'lov", "debt": "📒 Qarz", "partial": "💰 Qisman to'lov"}
+
+
+def _cart_summary(cart: list):
+    """Savatdagi mahsulotlar matni va umumiy summa."""
+    lines = []
+    total = 0
+    for it in cart:
+        sub = float(it["price"]) * it["quantity"]
+        total += sub
+        lines.append(
+            f"{it.get('category_icon', '📦')} {it['title']} — "
+            f"{it['quantity']} x {int(it['price']):,} = <b>{int(sub):,}</b>"
+        )
+    return "\n".join(lines), total
 
 
 # ============ 1. KATEGORIYA TANLASH ============
 
 @router.message(F.text == "🛒 Katalog")
 async def show_catalog(message: Message, state: FSMContext):
-    await state.clear()
     user = await db.get_user(message.from_user.id)
-
     if not user:
         await message.answer("❌ Avval ro'yxatdan o'ting: /start")
         return
@@ -48,6 +57,11 @@ async def show_catalog(message: Message, state: FSMContext):
         await message.answer("📭 Hozircha katalog bo'sh.")
         return
 
+    # Savatni saqlab qolamiz (navigatsiya davomida yo'qolmasin)
+    data = await state.get_data()
+    cart = data.get('cart', [])
+    await state.clear()
+    await state.update_data(cart=cart)
     await state.set_state(OrderStates.selecting_category)
     await message.answer(
         "📂 <b>Mahsulot turini tanlang:</b>",
@@ -66,7 +80,6 @@ async def select_category(callback: CallbackQuery, state: FSMContext):
 
     await state.update_data(category_id=category_id)
 
-    # Aksessuar singari brend/modelga bog'liq bo'lmagan kategoriyalar uchun
     if not category['requires_model']:
         products = await db.get_universal_products(category_id)
         if not products:
@@ -82,7 +95,6 @@ async def select_category(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    # Brend/modelga bog'liq kategoriyalar uchun
     brands = await db.get_brands_with_products(category_id)
     if not brands:
         await callback.answer(f"{category['name']} bo'limida hali mahsulot yo'q!", show_alert=True)
@@ -203,7 +215,7 @@ async def back_to_models(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ============ 3. BUYURTMA BERISH ============
+# ============ 3. MIQDOR TANLASH ============
 
 @router.callback_query(F.data.startswith("prod_"))
 async def select_product(callback: CallbackQuery, state: FSMContext):
@@ -213,7 +225,6 @@ async def select_product(callback: CallbackQuery, state: FSMContext):
     if not product:
         await callback.answer("Mahsulot topilmadi!", show_alert=True)
         return
-
     if product['quantity'] <= 0:
         await callback.answer("❌ Bu mahsulot hozircha mavjud emas!", show_alert=True)
         return
@@ -229,15 +240,12 @@ async def select_product(callback: CallbackQuery, state: FSMContext):
     )
     if product.get('description'):
         text += f"\n📝 {product['description']}\n"
-
     text += "\n<b>Nechta olmoqchisiz?</b>"
 
     await state.set_state(OrderStates.selecting_quantity)
     await state.update_data(product_id=product_id, quantity=1)
-
     await callback.message.edit_text(
-        text,
-        parse_mode="HTML",
+        text, parse_mode="HTML",
         reply_markup=get_quantity_keyboard(product_id, 1, product['quantity'])
     )
     await callback.answer()
@@ -248,15 +256,12 @@ async def qty_minus(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split("_")
     product_id = int(parts[2])
     current = int(parts[3])
-
     if current <= 1:
         await callback.answer("Minimum 1 dona", show_alert=False)
         return
-
     new_qty = current - 1
     product = await db.get_product(product_id)
     await state.update_data(quantity=new_qty)
-
     await callback.message.edit_reply_markup(
         reply_markup=get_quantity_keyboard(product_id, new_qty, product['quantity'])
     )
@@ -269,41 +274,142 @@ async def qty_plus(callback: CallbackQuery, state: FSMContext):
     product_id = int(parts[2])
     current = int(parts[3])
     max_qty = int(parts[4])
-
     if current >= max_qty:
         await callback.answer(f"Maksimum {max_qty} dona mavjud", show_alert=True)
         return
-
     new_qty = current + 1
     await state.update_data(quantity=new_qty)
-
     await callback.message.edit_reply_markup(
         reply_markup=get_quantity_keyboard(product_id, new_qty, max_qty)
     )
     await callback.answer()
 
 
+# ============ 4. SAVAT ============
+
 @router.callback_query(F.data.startswith("qty_ok_"))
-async def qty_confirmed(callback: CallbackQuery, state: FSMContext):
+async def add_to_cart(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split("_")
     product_id = int(parts[2])
     quantity = int(parts[3])
 
     product = await db.get_product(product_id)
-    total = product['price'] * quantity
-
-    await state.update_data(quantity=quantity, total=total)
-    await state.set_state(OrderStates.selecting_payment)
+    if not product or product['quantity'] <= 0:
+        await callback.answer("Mahsulot mavjud emas", show_alert=True)
+        return
 
     title = product['name']
     if product.get('model_name'):
         title = f"{product.get('brand_name','')} {product['model_name']} — {product['name']}"
 
+    data = await state.get_data()
+    cart = data.get('cart', [])
+    # Allaqachon savatda bo'lsa, miqdorni yangilaymiz
+    for it in cart:
+        if it['product_id'] == product_id:
+            it['quantity'] = quantity
+            break
+    else:
+        cart.append({
+            'product_id': product_id,
+            'title': title,
+            'category_icon': product.get('category_icon', '📦'),
+            'price': float(product['price']),
+            'quantity': quantity,
+        })
+
+    await state.update_data(cart=cart)
+    await state.set_state(None)
     await callback.message.edit_text(
-        f"💳 <b>To'lov usulini tanlang:</b>\n\n"
-        f"{product.get('category_icon','📦')} {title}\n"
-        f"📦 {quantity} dona\n"
-        f"💰 Jami: <b>{int(total):,} so'm</b>",
+        f"✅ <b>Savatga qo'shildi:</b>\n"
+        f"{product.get('category_icon','📦')} {title} — {quantity} dona\n\n"
+        f"🛒 Savatda: <b>{len(cart)} ta mahsulot</b>",
+        parse_mode="HTML",
+        reply_markup=get_added_to_cart_kb(len(cart))
+    )
+    await callback.answer("Savatga qo'shildi ✓")
+
+
+@router.callback_query(F.data == "cart_add_more")
+async def cart_add_more(callback: CallbackQuery, state: FSMContext):
+    categories = await db.get_categories()
+    await state.set_state(OrderStates.selecting_category)
+    await callback.message.edit_text(
+        "📂 <b>Mahsulot turini tanlang:</b>",
+        parse_mode="HTML",
+        reply_markup=get_categories_keyboard(categories)
+    )
+    await callback.answer()
+
+
+async def _show_cart(target, state: FSMContext, edit: bool):
+    data = await state.get_data()
+    cart = data.get('cart', [])
+    if not cart:
+        txt = "🛒 Savat bo'sh.\n\n«🛒 Katalog» orqali mahsulot qo'shing."
+        if edit:
+            await target.edit_text(txt)
+        else:
+            await target.answer(txt)
+        return
+    summary, total = _cart_summary(cart)
+    txt = (
+        f"🛒 <b>Savat:</b>\n\n{summary}\n\n"
+        f"💰 <b>Jami: {int(total):,} so'm</b>\n\n"
+        f"Mahsulotni o'chirish uchun ❌ tugmasini bosing:"
+    )
+    if edit:
+        await target.edit_text(txt, parse_mode="HTML", reply_markup=get_cart_kb(cart))
+    else:
+        await target.answer(txt, parse_mode="HTML", reply_markup=get_cart_kb(cart))
+
+
+@router.callback_query(F.data == "cart_view")
+async def cart_view_cb(callback: CallbackQuery, state: FSMContext):
+    await _show_cart(callback.message, state, edit=True)
+    await callback.answer()
+
+
+@router.message(F.text == "🛒 Savatim")
+async def cart_view_msg(message: Message, state: FSMContext):
+    user = await db.get_user(message.from_user.id)
+    if not user or not user['is_approved']:
+        return
+    await _show_cart(message, state, edit=False)
+
+
+@router.callback_query(F.data.startswith("cartrm_"))
+async def cart_remove(callback: CallbackQuery, state: FSMContext):
+    pid = int(callback.data.split("_")[1])
+    data = await state.get_data()
+    cart = [it for it in data.get('cart', []) if it['product_id'] != pid]
+    await state.update_data(cart=cart)
+    await _show_cart(callback.message, state, edit=True)
+    await callback.answer("O'chirildi")
+
+
+@router.callback_query(F.data == "cart_clear")
+async def cart_clear(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(cart=[])
+    await callback.message.edit_text("🗑 Savat tozalandi.")
+    await callback.message.answer("Asosiy menyu:", reply_markup=get_main_menu())
+    await callback.answer()
+
+
+# ============ 5. CHECKOUT (to'lov → olish → holat → tasdiq) ============
+
+@router.callback_query(F.data == "cart_checkout")
+async def cart_checkout(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    cart = data.get('cart', [])
+    if not cart:
+        await callback.answer("Savat bo'sh", show_alert=True)
+        return
+    summary, total = _cart_summary(cart)
+    await state.update_data(total=total)
+    await state.set_state(OrderStates.selecting_payment)
+    await callback.message.edit_text(
+        f"💳 <b>To'lov usulini tanlang:</b>\n\n{summary}\n\n💰 Jami: <b>{int(total):,} so'm</b>",
         parse_mode="HTML",
         reply_markup=get_payment_keyboard()
     )
@@ -313,21 +419,11 @@ async def qty_confirmed(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("pay_"), OrderStates.selecting_payment)
 async def select_payment(callback: CallbackQuery, state: FSMContext):
     payment = callback.data.replace("pay_", "")
-
     await state.update_data(payment_method=payment)
     await state.set_state(OrderStates.selecting_pickup)
-
     data = await state.get_data()
-    product = await db.get_product(data['product_id'])
-
-    title = product['name']
-    if product.get('model_name'):
-        title = f"{product.get('brand_name','')} {product['model_name']} — {product['name']}"
-
     await callback.message.edit_text(
         f"🚚 <b>Olib ketish usulini tanlang:</b>\n\n"
-        f"{product.get('category_icon','📦')} {title}\n"
-        f"📦 {data['quantity']} dona\n"
         f"💰 Jami: <b>{int(data['total']):,} so'm</b>\n"
         f"💳 To'lov: {PAYMENT_NAMES[payment]}",
         parse_mode="HTML",
@@ -341,23 +437,13 @@ async def select_pickup(callback: CallbackQuery, state: FSMContext):
     pickup = callback.data.replace("pickup_", "")
     await state.update_data(pickup_type=pickup)
     await state.set_state(OrderStates.selecting_payment_status)
-
     data = await state.get_data()
-    product = await db.get_product(data['product_id'])
-    title = product['name']
-    if product.get('model_name'):
-        title = f"{product.get('brand_name','')} {product['model_name']} — {product['name']}"
-
     await callback.message.edit_text(
         f"💼 <b>To'lov holatini tanlang:</b>\n\n"
-        f"{product.get('category_icon','📦')} {title}\n"
-        f"📦 {data['quantity']} dona\n"
         f"💰 Jami: <b>{int(data['total']):,} so'm</b>\n"
-        f"💳 To'lov: {PAYMENT_NAMES[data['payment_method']]}\n"
-        f"🚚 Olish: {PICKUP_NAMES[pickup]}\n\n"
-        f"<i>To'liq — hozir to'lash\n"
-        f"Qarz — keyinroq to'lash (admin tasdig'i bilan)\n"
-        f"Qisman — bir qismini hozir to'lash</i>",
+        f"💳 {PAYMENT_NAMES[data['payment_method']]}\n"
+        f"🚚 {PICKUP_NAMES[pickup]}\n\n"
+        f"<i>To'liq — hozir to'lash\nQarz — keyinroq\nQisman — bir qismini hozir</i>",
         parse_mode="HTML",
         reply_markup=get_payment_status_keyboard()
     )
@@ -370,7 +456,6 @@ async def select_payment_status(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
 
     if pstatus == "partial":
-        # Qisman summasini so'rash
         await state.set_state(OrderStates.waiting_partial_amount)
         await callback.message.edit_text(
             f"💰 Jami summa: <b>{int(data['total']):,} so'm</b>\n\n"
@@ -382,7 +467,8 @@ async def select_payment_status(callback: CallbackQuery, state: FSMContext):
 
     paid_amount = data['total'] if pstatus == "paid" else 0
     await state.update_data(payment_status=pstatus, paid_amount=paid_amount)
-    await _show_confirmation(callback, state)
+    await _show_confirmation(callback.message, state, edit=True)
+    await callback.answer()
 
 
 @router.message(OrderStates.waiting_partial_amount, F.text)
@@ -397,168 +483,164 @@ async def process_partial_amount(message: Message, state: FSMContext):
 
     data = await state.get_data()
     if amount >= data['total']:
-        # To'liq to'lov bo'lib qoldi
         await state.update_data(payment_status="paid", paid_amount=data['total'])
     elif amount == 0:
         await state.update_data(payment_status="debt", paid_amount=0)
     else:
         await state.update_data(payment_status="partial", paid_amount=amount)
 
-    await _show_confirmation_msg(message, state)
+    await _show_confirmation(message, state, edit=False)
 
 
-async def _show_confirmation(callback: CallbackQuery, state: FSMContext):
+async def _show_confirmation(target, state: FSMContext, edit: bool):
     data = await state.get_data()
-    product = await db.get_product(data['product_id'])
+    cart = data.get('cart', [])
+    summary, total = _cart_summary(cart)
+    debt = total - data.get('paid_amount', 0)
 
-    text = _build_confirmation_text(product, data)
-    await state.set_state(OrderStates.confirming)
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=get_confirm_keyboard())
-    await callback.answer()
-
-
-async def _show_confirmation_msg(message: Message, state: FSMContext):
-    data = await state.get_data()
-    product = await db.get_product(data['product_id'])
-    text = _build_confirmation_text(product, data)
-    await state.set_state(OrderStates.confirming)
-    await message.answer(text, parse_mode="HTML", reply_markup=get_confirm_keyboard())
-
-
-def _build_confirmation_text(product: dict, data: dict) -> str:
-    title = product['name']
-    if product.get('model_name'):
-        title = f"{product.get('brand_name','')} {product['model_name']} — {product['name']}"
-
-    debt = data['total'] - data.get('paid_amount', 0)
     text = (
-        f"📋 <b>Buyurtmangizni tasdiqlang:</b>\n\n"
-        f"{product.get('category_icon','📦')} <b>{title}</b>\n"
-        f"📦 Miqdor: <b>{data['quantity']} dona</b>\n"
-        f"💰 Bitta narxi: {int(product['price']):,} so'm\n"
-        f"💰 <b>Jami: {int(data['total']):,} so'm</b>\n\n"
+        f"📋 <b>Buyurtmangizni tasdiqlang:</b>\n\n{summary}\n\n"
+        f"💰 <b>Jami: {int(total):,} so'm</b>\n\n"
         f"💳 To'lov: <b>{PAYMENT_NAMES[data['payment_method']]}</b>\n"
         f"🚚 Olib ketish: <b>{PICKUP_NAMES[data['pickup_type']]}</b>\n"
-        f"💼 To'lov holati: <b>{PSTATUS_NAMES[data['payment_status']]}</b>\n"
+        f"💼 Holat: <b>{PSTATUS_NAMES[data['payment_status']]}</b>\n"
     )
-
     if data['payment_status'] == "partial":
-        text += f"   • Hozir to'laysiz: {int(data['paid_amount']):,} so'm\n"
-        text += f"   • Qarzga: {int(debt):,} so'm\n"
+        text += f"   • Hozir: {int(data['paid_amount']):,} so'm\n   • Qarzga: {int(debt):,} so'm\n"
     elif data['payment_status'] == "debt":
-        text += f"   • Qarz miqdori: {int(data['total']):,} so'm\n"
+        text += f"   • Qarz: {int(total):,} so'm\n"
 
-    # To'lov tafsilotlari (qarzga olganda bunday emas)
-    if data['paid_amount'] > 0:
+    if data.get('paid_amount', 0) > 0:
         if data['payment_method'] == "plastik":
             text += (
                 f"\n💳 Karta: <code>{config.CARD_NUMBER}</code>\n"
                 f"👤 Egasi: {config.CARD_OWNER}\n"
-                f"🧾 To'lovni amalga oshirib, tasdiqlagandan so'ng <b>chek rasmini</b> yuborasiz."
+                f"🧾 Tasdiqlagach <b>chek rasmini</b> yuborasiz."
             )
         elif data['payment_method'] == "naqd" and data['pickup_type'] == "shop":
             text += f"\n🏪 Manzil: {config.SHOP_ADDRESS}"
 
-    return text
+    await state.set_state(OrderStates.confirming)
+    if edit:
+        await target.edit_text(text, parse_mode="HTML", reply_markup=get_confirm_keyboard())
+    else:
+        await target.answer(text, parse_mode="HTML", reply_markup=get_confirm_keyboard())
 
 
 @router.callback_query(F.data == "confirm_order", OrderStates.confirming)
 async def confirm_order(callback: CallbackQuery, state: FSMContext, bot: Bot):
     data = await state.get_data()
+    cart = data.get('cart', [])
     user = await db.get_user(callback.from_user.id)
-    product = await db.get_product(data['product_id'])
-
-    if product['quantity'] < data['quantity']:
-        await callback.message.edit_text(
-            "❌ Afsuski, bu mahsulot endi yetarli emas. Iltimos, qaytadan urinib ko'ring."
-        )
-        await state.clear()
+    if not cart:
+        await callback.answer("Savat bo'sh", show_alert=True)
         return
 
-    cost_at_sale = float(product['cost_price']) * data['quantity']
+    # Mavjudlikni qayta tekshiramiz
+    items = []
+    for it in cart:
+        p = await db.get_product(it['product_id'])
+        if not p or p['quantity'] < it['quantity']:
+            await callback.message.edit_text(
+                f"❌ <b>{it['title']}</b> yetarli emas "
+                f"(mavjud: {p['quantity'] if p else 0} dona).\n"
+                f"Savatni tahrirlang.",
+                parse_mode="HTML"
+            )
+            await state.set_state(None)
+            await callback.answer()
+            return
+        items.append((p, it['quantity']))
 
-    order_id = await db.add_order(
-        user_id=user['id'],
-        product_id=data['product_id'],
-        quantity=data['quantity'],
-        total_price=data['total'],
-        cost_at_sale=cost_at_sale,
-        payment_method=data['payment_method'],
-        pickup_type=data['pickup_type'],
-        payment_status=data['payment_status'],
-        paid_amount=data.get('paid_amount', 0),
-    )
+    total = sum(float(p['price']) * q for p, q in items)
+    pstatus = data['payment_status']
+    paid_total = data.get('paid_amount', total if pstatus == "paid" else 0)
 
-    await db.update_product_quantity(data['product_id'], product['quantity'] - data['quantity'])
+    group_id = uuid.uuid4().hex[:12]
+    remaining = paid_total
+    for p, q in items:
+        sub = float(p['price']) * q
+        cost = float(p['cost_price']) * q
+        if pstatus == "paid":
+            pa = sub
+        elif pstatus == "debt":
+            pa = 0
+        else:
+            pa = min(sub, remaining)
+            remaining -= pa
+        await db.add_order(
+            user_id=user['id'], product_id=p['id'], quantity=q,
+            total_price=sub, cost_at_sale=cost,
+            payment_method=data['payment_method'], pickup_type=data['pickup_type'],
+            payment_status=pstatus, paid_amount=pa, group_id=group_id
+        )
+        await db.update_product_quantity(p['id'], p['quantity'] - q)
 
-    title = product['name']
-    if product.get('model_name'):
-        title = f"{product.get('brand_name','')} {product['model_name']} — {product['name']}"
+    debt = total - paid_total
+    needs_receipt = (data['payment_method'] == "plastik" and paid_total > 0)
+    summary, _ = _cart_summary(cart)
 
-    debt = data['total'] - data.get('paid_amount', 0)
-    # Plastik to'lovda (qarz emas) chek rasmi talab qilinadi
-    needs_receipt = (data['payment_method'] == "plastik" and data.get('paid_amount', 0) > 0)
-
+    # Foydalanuvchiga
     msg = (
-        f"✅ <b>Buyurtmangiz qabul qilindi!</b>\n\n"
-        f"🆔 Buyurtma raqami: <b>#{order_id}</b>\n"
-        f"{product.get('category_icon','📦')} {title}\n"
-        f"📦 {data['quantity']} dona\n"
-        f"💰 Jami: <b>{int(data['total']):,} so'm</b>\n"
-        f"💳 To'lov: {PAYMENT_NAMES[data['payment_method']]} ({PSTATUS_NAMES[data['payment_status']]})\n"
+        f"✅ <b>Buyurtmangiz qabul qilindi!</b>\n\n{summary}\n\n"
+        f"💰 Jami: <b>{int(total):,} so'm</b>\n"
+        f"💳 {PAYMENT_NAMES[data['payment_method']]} ({PSTATUS_NAMES[pstatus]})\n"
         f"🚚 {PICKUP_NAMES[data['pickup_type']]}\n"
     )
     if debt > 0:
         msg += f"\n📒 <b>Qarz qoldi: {int(debt):,} so'm</b>\n"
-
     if needs_receipt:
         msg += (
-            f"\n💳 <b>Plastik to'lov uchun karta:</b>\n"
-            f"<code>{config.CARD_NUMBER}</code>\n"
-            f"👤 {config.CARD_OWNER}\n\n"
-            f"🧾 <b>To'lovni amalga oshirib, chek rasmini shu yerga yuboring.</b>\n"
-            f"Admin chekni ko'rib, buyurtmani tasdiqlaydi."
+            f"\n💳 <b>Karta:</b> <code>{config.CARD_NUMBER}</code>\n👤 {config.CARD_OWNER}\n\n"
+            f"🧾 <b>To'lab, chek rasmini shu yerga yuboring.</b>"
         )
     else:
-        msg += f"\n📞 Admin tez orada siz bilan bog'lanadi.\nAloqa: {config.SHOP_PHONE}"
-
+        msg += f"\n📞 Admin tez orada bog'lanadi.\nAloqa: {config.SHOP_PHONE}"
     await callback.message.edit_text(msg, parse_mode="HTML")
 
-    # Adminlarga xabar
+    # Adminlarga (guruh + boshqaruv tugmalari)
     admin_text = (
-        f"🆕 <b>Yangi buyurtma! #{order_id}</b>\n\n"
+        f"🆕 <b>Yangi buyurtma!</b>\n\n"
         f"👤 Mijoz: <b>{user['full_name']}</b>\n"
-        f"📱 Telefon: <code>{user['phone']}</code>\n"
-        f"🆔 TG: <code>{user['telegram_id']}</code>\n\n"
-        f"{product.get('category_icon','📦')} Mahsulot: <b>{title}</b>\n"
-        f"📦 Miqdor: <b>{data['quantity']} dona</b>\n"
-        f"💰 Jami: <b>{int(data['total']):,} so'm</b>\n"
-        f"💳 To'lov: <b>{PAYMENT_NAMES[data['payment_method']]}</b> "
-        f"({PSTATUS_NAMES[data['payment_status']]})\n"
-        f"🚚 Olish: <b>{PICKUP_NAMES[data['pickup_type']]}</b>\n"
+        f"📱 <code>{user['phone']}</code>\n"
+        f"🆔 <code>{user['telegram_id']}</code>\n\n"
+        f"{summary}\n\n"
+        f"💰 Jami: <b>{int(total):,} so'm</b>\n"
+        f"💳 <b>{PAYMENT_NAMES[data['payment_method']]}</b> ({PSTATUS_NAMES[pstatus]})\n"
+        f"🚚 <b>{PICKUP_NAMES[data['pickup_type']]}</b>\n"
     )
     if debt > 0:
-        admin_text += f"\n⚠️ <b>QARZ: {int(debt):,} so'm</b>"
+        admin_text += f"⚠️ <b>QARZ: {int(debt):,} so'm</b>\n"
     if needs_receipt:
-        admin_text += "\n🧾 <i>Usta to'lov chekini yuboradi (pastda keladi).</i>"
+        admin_text += "🧾 <i>Usta chek yuboradi (pastda).</i>\n"
 
     for admin_id in config.ADMIN_IDS:
         try:
             await bot.send_message(
-                admin_id,
-                admin_text,
-                parse_mode="HTML",
-                reply_markup=get_order_admin_keyboard(order_id)
+                admin_id, admin_text, parse_mode="HTML",
+                reply_markup=get_group_actions_kb(group_id)
             )
         except Exception as e:
             print(f"Admin xato: {e}")
 
-    # Plastik to'lov bo'lsa — chek rasmini kutamiz, aks holda dialogni yopamiz
     if needs_receipt:
         await state.set_state(OrderStates.waiting_receipt)
-        await state.update_data(receipt_order_id=order_id, receipt_title=title)
+        await state.update_data(cart=[], receipt_group_id=group_id, receipt_summary=summary)
     else:
         await state.clear()
+    await callback.answer()
+
+
+@router.callback_query(F.data == "cancel_order")
+async def cancel_order(callback: CallbackQuery, state: FSMContext):
+    # Savatni saqlab, savat ko'rinishiga qaytamiz
+    await state.set_state(None)
+    data = await state.get_data()
+    if data.get('cart'):
+        await _show_cart(callback.message, state, edit=True)
+    else:
+        await callback.message.edit_text("❌ Bekor qilindi.")
+        await callback.message.answer("Asosiy menyu:", reply_markup=get_main_menu())
     await callback.answer()
 
 
@@ -567,66 +649,46 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext, bot: Bot):
 @router.message(OrderStates.waiting_receipt, F.photo)
 async def receive_receipt_photo(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
-    order_id = data.get('receipt_order_id')
-    title = data.get('receipt_title', f"#{order_id}")
+    summary = data.get('receipt_summary', '')
     user = await db.get_user(message.from_user.id)
     file_id = message.photo[-1].file_id
-
     caption = (
-        f"🧾 <b>To'lov cheki — Buyurtma #{order_id}</b>\n\n"
+        f"🧾 <b>To'lov cheki</b>\n\n"
         f"👤 {user['full_name'] if user else message.from_user.full_name}\n"
-        f"📱 {user['phone'] if user else ''}\n"
-        f"📦 {title}\n\n"
-        f"⬆️ Yuqoridagi buyurtma xabaridan tasdiqlang."
+        f"📱 {user['phone'] if user else ''}\n\n{summary}\n\n"
+        f"⬆️ Yuqoridagi buyurtmadan tasdiqlang."
     )
-
     sent = False
     for admin_id in config.ADMIN_IDS:
         try:
             await bot.send_photo(admin_id, file_id, caption=caption, parse_mode="HTML")
             sent = True
         except Exception as e:
-            print(f"Chek yuborishda xato: {e}")
-
+            print(f"Chek xato: {e}")
     await state.clear()
-    if sent:
-        await message.answer(
-            "✅ <b>Chek qabul qilindi!</b>\n\n"
-            "Admin to'lovni tekshirib, buyurtmangizni tasdiqlaydi.\n"
-            f"📞 {config.SHOP_PHONE}",
-            parse_mode="HTML",
-            reply_markup=get_main_menu()
-        )
-    else:
-        await message.answer(
-            "⚠️ Chekni yuborishda muammo bo'ldi. Iltimos admin bilan bog'laning:\n"
-            f"📞 {config.SHOP_PHONE}",
-            reply_markup=get_main_menu()
-        )
+    await message.answer(
+        "✅ <b>Chek qabul qilindi!</b>\n\nAdmin tekshirib, buyurtmangizni tasdiqlaydi.\n"
+        f"📞 {config.SHOP_PHONE}" if sent else
+        f"⚠️ Chek yuborishda muammo. Aloqa: {config.SHOP_PHONE}",
+        parse_mode="HTML", reply_markup=get_main_menu()
+    )
 
 
 @router.message(OrderStates.waiting_receipt, F.document)
 async def receive_receipt_doc(message: Message, state: FSMContext, bot: Bot):
-    """Chek fayl (rasm-fayl) sifatida yuborilsa"""
     data = await state.get_data()
-    order_id = data.get('receipt_order_id')
-    title = data.get('receipt_title', f"#{order_id}")
+    summary = data.get('receipt_summary', '')
     user = await db.get_user(message.from_user.id)
-
     caption = (
-        f"🧾 <b>To'lov cheki — Buyurtma #{order_id}</b>\n\n"
+        f"🧾 <b>To'lov cheki</b>\n\n"
         f"👤 {user['full_name'] if user else message.from_user.full_name}\n"
-        f"📱 {user['phone'] if user else ''}\n"
-        f"📦 {title}"
+        f"📱 {user['phone'] if user else ''}\n\n{summary}"
     )
-    sent = False
     for admin_id in config.ADMIN_IDS:
         try:
             await bot.send_document(admin_id, message.document.file_id, caption=caption, parse_mode="HTML")
-            sent = True
         except Exception as e:
-            print(f"Chek yuborishda xato: {e}")
-
+            print(f"Chek xato: {e}")
     await state.clear()
     await message.answer(
         "✅ <b>Chek qabul qilindi!</b>\n\nAdmin tekshirib, buyurtmani tasdiqlaydi.",
@@ -634,15 +696,7 @@ async def receive_receipt_doc(message: Message, state: FSMContext, bot: Bot):
     )
 
 
-@router.callback_query(F.data == "cancel_order")
-async def cancel_order(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.edit_text("❌ Buyurtma bekor qilindi.")
-    await callback.message.answer("Asosiy menyu:", reply_markup=get_main_menu())
-    await callback.answer()
-
-
-# ============ BUYURTMALAR TARIXI ============
+# ============ BUYURTMALAR TARIXI (guruhlangan) ============
 
 @router.message(F.text == "📋 Buyurtmalarim")
 async def my_orders(message: Message):
@@ -650,36 +704,37 @@ async def my_orders(message: Message):
     if not user or not user['is_approved']:
         return
 
-    orders = await db.get_user_orders(user['id'])
+    orders = await db.get_user_orders(user['id'], limit=60)
     if not orders:
         await message.answer("📭 Sizda hali buyurtmalar yo'q.")
         return
 
-    status_emoji = {
-        "kutilmoqda": "⏳",
-        "tasdiqlandi": "✅",
-        "yakunlandi": "🎉",
-        "bekor": "❌"
-    }
+    status_emoji = {"kutilmoqda": "⏳", "tasdiqlandi": "✅", "yakunlandi": "🎉", "bekor": "❌"}
     pstatus_emoji = {"paid": "✅", "debt": "📒", "partial": "💰"}
 
+    # group_id bo'yicha guruhlash
+    groups = {}
+    for o in orders:
+        gid = o.get('group_id') or f"S{o['id']}"
+        groups.setdefault(gid, []).append(o)
+
     text = "📋 <b>Sizning buyurtmalaringiz:</b>\n\n"
-    for o in orders[:10]:
-        emoji = status_emoji.get(o['status'], "📦")
-        pemoji = pstatus_emoji.get(o.get('payment_status'), "")
-        product_title = o.get('product_name', '?')
-        if o.get('brand_name') and o.get('model_name'):
-            product_title = f"{o['brand_name']} {o['model_name']} — {product_title}"
-        cat = o.get('category_icon', '📦')
-        debt = float(o['total_price']) - float(o.get('paid_amount', 0) or 0)
-        text += (
-            f"{emoji} <b>#{o['id']}</b> · {o['status']} {pemoji}\n"
-            f"   {cat} {product_title}\n"
-            f"   📦 {o['quantity']} dona | 💰 {int(o['total_price']):,} so'm\n"
-        )
-        if debt > 0:
-            text += f"   📒 Qarz: <b>{int(debt):,} so'm</b>\n"
-        text += f"   📅 {o['created_at'][:16]}\n\n"
+    for gid, rows in list(groups.items())[:10]:
+        first = rows[0]
+        emoji = status_emoji.get(first['status'], "📦")
+        pemoji = pstatus_emoji.get(first.get('payment_status'), "")
+        g_total = sum(float(r['total_price']) for r in rows)
+        g_debt = sum(float(r['total_price']) - float(r.get('paid_amount', 0) or 0) for r in rows)
+        text += f"{emoji} <b>Buyurtma</b> · {first['status']} {pemoji}\n"
+        for r in rows:
+            pt = r.get('product_name', '?')
+            if r.get('brand_name') and r.get('model_name'):
+                pt = f"{r['brand_name']} {r['model_name']} — {pt}"
+            text += f"   {r.get('category_icon','📦')} {pt} × {r['quantity']}\n"
+        text += f"   💰 Jami: {int(g_total):,} so'm\n"
+        if g_debt > 0:
+            text += f"   📒 Qarz: <b>{int(g_debt):,} so'm</b>\n"
+        text += f"   📅 {first['created_at'][:16]}\n\n"
 
     await message.answer(text, parse_mode="HTML")
 

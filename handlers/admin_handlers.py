@@ -17,7 +17,8 @@ from keyboards.admin_kb import (
     get_categories_admin_keyboard, get_brands_admin_keyboard,
     get_models_admin_keyboard, get_products_admin_keyboard,
     get_product_edit_keyboard, get_users_management_keyboard,
-    get_user_action_keyboard, get_order_admin_keyboard,
+    get_user_action_keyboard,
+    get_group_actions_kb, get_orders_filter_kb, get_order_groups_kb, get_group_delete_confirm_kb,
     get_sales_period_keyboard, get_sales_report_actions,
     get_debtors_keyboard, get_debt_actions_keyboard, get_debt_orders_keyboard,
     get_low_stock_keyboard, get_sell_users_kb, get_sell_payment_kb,
@@ -1967,131 +1968,203 @@ async def mng_model_delete_yes(callback: CallbackQuery):
     await callback.answer("O'chirildi")
 
 
-# ============ BUYURTMALARNI BOSHQARISH ============
+# ============ BUYURTMALARNI BOSHQARISH (guruh) ============
 
-@router.message(F.text == "🛍 Buyurtmalar")
-async def show_orders(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-
-    orders = await db.get_pending_orders()
-    if not orders:
-        await message.answer("📭 Kutilayotgan buyurtmalar yo'q.")
-        return
-
-    text = f"🛍 <b>Kutilayotgan buyurtmalar ({len(orders)} ta):</b>\n\n"
-    payment_names = {"naqd": "💵 Naqd", "plastik": "💳 Plastik"}
-    pickup_names = {"shop": "🏪 Do'kondan", "delivery": "🚚 Yetkazib berish"}
-    pstatus_names = {"paid": "✅", "debt": "📒", "partial": "💰"}
-
-    for o in orders[:10]:
-        product_title = o.get('product_name', '?')
-        if o.get('brand_name') and o.get('model_name'):
-            product_title = f"{o['brand_name']} {o['model_name']} — {product_title}"
-        ps = pstatus_names.get(o.get('payment_status'), '')
-        text += (
-            f"📦 <b>Buyurtma #{o['id']}</b> {ps}\n"
-            f"👤 {o['full_name']} | {o['phone']}\n"
-            f"{o.get('category_icon','📦')} {product_title}\n"
-            f"📦 {o['quantity']} dona | 💰 {int(o['total_price']):,} so'm\n"
-            f"💳 {payment_names.get(o['payment_method'], o['payment_method'])} | "
-            f"{pickup_names.get(o['pickup_type'], o['pickup_type'])}\n"
-            f"📅 {o['created_at'][:16]}\n\n"
-        )
-
-    await message.answer(text, parse_mode="HTML")
+ORDER_STATUS_NAMES = {
+    "kutilmoqda": "⏳ Kutilmoqda", "tasdiqlandi": "✅ Tasdiqlangan",
+    "yakunlandi": "🎉 Yakunlangan", "bekor": "❌ Bekor qilingan"
+}
+PAY_NAMES = {"naqd": "💵 Naqd", "plastik": "💳 Plastik"}
+PICK_NAMES = {"shop": "🏪 Do'kondan", "delivery": "🚚 Yetkazib berish"}
+PST_NAMES = {"paid": "✅ To'liq", "debt": "📒 Qarz", "partial": "💰 Qisman"}
 
 
-@router.callback_query(F.data.startswith("order_confirm_"))
-async def confirm_order_admin(callback: CallbackQuery, bot: Bot):
-    if not is_admin(callback.from_user.id):
-        return
-    order_id = int(callback.data.split("_")[2])
-    order = await db.get_order(order_id)
-    if not order:
-        await callback.answer("Buyurtma topilmadi!", show_alert=True)
-        return
-
-    await db.update_order_status(order_id, "tasdiqlandi")
-    await callback.message.edit_text(
-        callback.message.html_text + "\n\n✅ <b>TASDIQLANDI</b>",
-        parse_mode="HTML"
+def _group_text(grp: dict) -> str:
+    items_txt = ""
+    for it in grp["items"]:
+        pt = it.get("product_name", "?")
+        if it.get("brand_name") and it.get("model_name"):
+            pt = f"{it['brand_name']} {it['model_name']} — {pt}"
+        items_txt += f"  {it.get('category_icon','📦')} {pt} × {it['quantity']} = {int(it['total_price']):,}\n"
+    debt = float(grp["total"]) - float(grp["paid"])
+    txt = (
+        f"📦 <b>Buyurtma</b> — {ORDER_STATUS_NAMES.get(grp['status'], grp['status'])}\n\n"
+        f"👤 {grp['full_name']} | {grp['phone']}\n"
+        f"🆔 <code>{grp['telegram_id']}</code>\n\n"
+        f"{items_txt}\n"
+        f"💰 Jami: <b>{int(grp['total']):,} so'm</b>\n"
+        f"💳 {PAY_NAMES.get(grp['payment_method'], grp['payment_method'])} "
+        f"({PST_NAMES.get(grp['payment_status'], '')})\n"
+        f"🚚 {PICK_NAMES.get(grp['pickup_type'], grp['pickup_type'])}\n"
     )
+    if debt > 0:
+        txt += f"📒 Qarz: <b>{int(debt):,} so'm</b>\n"
+    txt += f"📅 {str(grp['created_at'])[:16]}"
+    return txt
+
+
+async def _notify_user_status(bot: Bot, telegram_id: int, status: str):
+    msgs = {
+        "tasdiqlandi": "✅ <b>Buyurtmangiz tasdiqlandi!</b>",
+        "yakunlandi": "🎉 <b>Buyurtmangiz yakunlandi!</b> Rahmat! ❤️",
+        "bekor": "❌ <b>Buyurtmangiz bekor qilindi.</b>",
+    }
+    if status not in msgs:
+        return
     try:
-        product_title = order.get('product_name', '?')
-        if order.get('brand_name') and order.get('model_name'):
-            product_title = f"{order['brand_name']} {order['model_name']} — {product_title}"
         await bot.send_message(
-            order['telegram_id'],
-            f"✅ <b>Buyurtmangiz tasdiqlandi!</b>\n\n"
-            f"🆔 #{order_id}\n"
-            f"{order.get('category_icon','📦')} {product_title}\n"
-            f"💰 {int(order['total_price']):,} so'm\n\n"
-            f"📞 Admin tez orada bog'lanadi: {config.SHOP_PHONE}",
-            parse_mode="HTML"
+            telegram_id, f"{msgs[status]}\n📞 {config.SHOP_PHONE}", parse_mode="HTML"
         )
     except Exception:
         pass
+
+
+@router.message(F.text == "🛍 Buyurtmalar")
+async def show_orders(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    await state.clear()
+    await message.answer(
+        "🛍 <b>Buyurtmalar boshqaruvi</b>\n\nQaysi holatdagilarni ko'rasiz?",
+        parse_mode="HTML", reply_markup=get_orders_filter_kb()
+    )
+
+
+@router.callback_query(F.data == "ord_back")
+async def orders_back(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "🛍 <b>Buyurtmalar boshqaruvi</b>\n\nQaysi holat?",
+        parse_mode="HTML", reply_markup=get_orders_filter_kb()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ordlist_"))
+async def orders_list(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    status = callback.data.split("_", 1)[1]
+    st = None if status == "all" else status
+    groups = await db.list_order_groups(st)
+    if not groups:
+        await callback.message.edit_text(
+            "📭 Bu holatda buyurtma yo'q.", reply_markup=get_orders_filter_kb()
+        )
+        await callback.answer()
+        return
+    title = "Barcha buyurtmalar" if status == "all" else ORDER_STATUS_NAMES.get(status, status)
+    await callback.message.edit_text(
+        f"🛍 <b>{title}</b> ({len(groups)} ta):\n\nBatafsil uchun tanlang:",
+        parse_mode="HTML", reply_markup=get_order_groups_kb(groups)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ordgrp_"))
+async def order_group_detail(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    gid = callback.data.split("_", 1)[1]
+    grp = await db.get_order_group(gid)
+    if not grp:
+        await callback.answer("Buyurtma topilmadi", show_alert=True)
+        return
+    await callback.message.edit_text(
+        _group_text(grp), parse_mode="HTML",
+        reply_markup=get_group_actions_kb(gid, grp["status"], with_back=True)
+    )
+    await callback.answer()
+
+
+async def _refresh_group(callback: CallbackQuery, gid: str):
+    grp = await db.get_order_group(gid)
+    if not grp:
+        await callback.message.edit_text("✅ Bajarildi (buyurtma yo'q).")
+        return
+    await callback.message.edit_text(
+        _group_text(grp), parse_mode="HTML",
+        reply_markup=get_group_actions_kb(gid, grp["status"], with_back=True)
+    )
+
+
+@router.callback_query(F.data.startswith("ordconf_"))
+async def order_group_confirm(callback: CallbackQuery, bot: Bot):
+    if not is_admin(callback.from_user.id):
+        return
+    gid = callback.data.split("_", 1)[1]
+    grp = await db.get_order_group(gid)
+    if not grp:
+        await callback.answer("Topilmadi", show_alert=True)
+        return
+    await db.set_group_status(gid, "tasdiqlandi")
+    await _notify_user_status(bot, grp["telegram_id"], "tasdiqlandi")
+    await _refresh_group(callback, gid)
     await callback.answer("✅ Tasdiqlandi")
 
 
-@router.callback_query(F.data.startswith("order_cancel_"))
-async def cancel_order_admin(callback: CallbackQuery, bot: Bot):
+@router.callback_query(F.data.startswith("ordcomp_"))
+async def order_group_complete(callback: CallbackQuery, bot: Bot):
     if not is_admin(callback.from_user.id):
         return
-    order_id = int(callback.data.split("_")[2])
-    order = await db.get_order(order_id)
-    if not order:
+    gid = callback.data.split("_", 1)[1]
+    grp = await db.get_order_group(gid)
+    if not grp:
+        await callback.answer("Topilmadi", show_alert=True)
         return
-
-    await db.update_order_status(order_id, "bekor")
-
-    # Mahsulotni omborga qaytarish
-    if order.get('product_id'):
-        product = await db.get_product(order['product_id'])
-        if product:
-            await db.update_product_quantity(
-                order['product_id'], product['quantity'] + order['quantity']
-            )
-
-    await callback.message.edit_text(
-        callback.message.html_text + "\n\n❌ <b>BEKOR QILINDI</b>",
-        parse_mode="HTML"
-    )
-    try:
-        await bot.send_message(
-            order['telegram_id'],
-            f"❌ Buyurtmangiz <b>#{order_id}</b> bekor qilindi.\n"
-            f"Aloqa: {config.SHOP_PHONE}",
-            parse_mode="HTML"
-        )
-    except Exception:
-        pass
-    await callback.answer("❌ Bekor qilindi")
+    await db.set_group_status(gid, "yakunlandi")
+    await _notify_user_status(bot, grp["telegram_id"], "yakunlandi")
+    await _refresh_group(callback, gid)
+    await callback.answer("🎉 Yakunlandi — hisobotga qo'shildi")
 
 
-@router.callback_query(F.data.startswith("order_complete_"))
-async def complete_order_admin(callback: CallbackQuery, bot: Bot):
+@router.callback_query(F.data.startswith("ordcanc_"))
+async def order_group_cancel(callback: CallbackQuery, bot: Bot):
     if not is_admin(callback.from_user.id):
         return
-    order_id = int(callback.data.split("_")[2])
-    order = await db.get_order(order_id)
-    await db.update_order_status(order_id, "yakunlandi")
+    gid = callback.data.split("_", 1)[1]
+    grp = await db.get_order_group(gid)
+    if not grp:
+        await callback.answer("Topilmadi", show_alert=True)
+        return
+    await db.cancel_group(gid)  # sklad qaytadi
+    await _notify_user_status(bot, grp["telegram_id"], "bekor")
+    await _refresh_group(callback, gid)
+    await callback.answer("❌ Bekor qilindi — sklad qaytdi")
 
+
+@router.callback_query(F.data.startswith("orddel_"))
+async def order_group_delete_confirm(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    gid = callback.data.split("_", 1)[1]
+    grp = await db.get_order_group(gid)
+    if not grp:
+        await callback.answer("Topilmadi", show_alert=True)
+        return
     await callback.message.edit_text(
-        callback.message.html_text + "\n\n🎉 <b>YAKUNLANDI</b>",
+        f"🗑 <b>Buyurtmani butunlay o'chirasizmi?</b>\n\n"
+        f"👤 {grp['full_name']}\n💰 {int(grp['total']):,} so'm ({grp['items']} ta mahsulot)\n\n"
+        f"⚠️ Sklad qaytariladi va hisobotdan butunlay chiqadi.\n"
+        f"Buni ortga qaytarib bo'lmaydi.",
+        parse_mode="HTML", reply_markup=get_group_delete_confirm_kb(gid)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("orddelyes_"))
+async def order_group_delete_yes(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    gid = callback.data.split("_", 1)[1]
+    await db.delete_group(gid)  # sklad qaytadi + yozuvlar o'chadi
+    await callback.message.edit_text(
+        "🗑 <b>Buyurtma o'chirildi.</b>\nSklad qaytarildi va hisobotdan chiqarildi.",
         parse_mode="HTML"
     )
-    try:
-        await bot.send_message(
-            order['telegram_id'],
-            f"🎉 Buyurtmangiz <b>#{order_id}</b> yakunlandi!\n"
-            f"Bizdan xarid qilganingiz uchun rahmat! ❤️",
-            parse_mode="HTML"
-        )
-    except Exception:
-        pass
-    await callback.answer("🎉 Yakunlandi")
+    await callback.message.answer(
+        "🛍 Buyurtmalar:", reply_markup=get_orders_filter_kb()
+    )
+    await callback.answer("O'chirildi")
 
 
 # ============ BACKUP / RESTORE ============

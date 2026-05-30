@@ -20,9 +20,9 @@ def get_main_menu() -> ReplyKeyboardMarkup:
     """Asosiy menyu (tasdiqlangan ustalar uchun)"""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🛒 Katalog"), KeyboardButton(text="📋 Buyurtmalarim")],
-            [KeyboardButton(text="💳 Qarzlarim"), KeyboardButton(text="📞 Aloqa")],
-            [KeyboardButton(text="ℹ️ Ma'lumot")]
+            [KeyboardButton(text="🛒 Katalog"), KeyboardButton(text="🛒 Savatim")],
+            [KeyboardButton(text="📋 Buyurtmalarim"), KeyboardButton(text="💳 Qarzlarim")],
+            [KeyboardButton(text="📞 Aloqa"), KeyboardButton(text="ℹ️ Ma'lumot")]
         ],
         resize_keyboard=True
     )
@@ -118,10 +118,33 @@ def get_quantity_keyboard(product_id: int, current: int = 1, max_qty: int = 1) -
         InlineKeyboardButton(text="➕", callback_data=f"qty_plus_{product_id}_{current}_{max_qty}")
     ]
     row2 = [
-        InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"qty_ok_{product_id}_{current}"),
-        InlineKeyboardButton(text="❌ Bekor", callback_data="cancel_order")
+        InlineKeyboardButton(text="🛒 Savatga qo'shish", callback_data=f"qty_ok_{product_id}_{current}"),
+        InlineKeyboardButton(text="❌ Bekor", callback_data="cart_add_more")
     ]
     return InlineKeyboardMarkup(inline_keyboard=[row1, row2])
+
+
+def get_added_to_cart_kb(count: int) -> InlineKeyboardMarkup:
+    """Savatga qo'shilgandan keyingi tugmalar"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Yana qo'shish", callback_data="cart_add_more")],
+        [InlineKeyboardButton(text=f"🛒 Savat ({count}) — Buyurtma berish", callback_data="cart_view")]
+    ])
+
+
+def get_cart_kb(cart: list) -> InlineKeyboardMarkup:
+    """Savat ko'rinishi — har bir mahsulotni o'chirish + amallar"""
+    buttons = []
+    for it in cart:
+        label = it['title'] if len(it['title']) <= 28 else it['title'][:27] + "…"
+        buttons.append([InlineKeyboardButton(
+            text=f"❌ {label} (×{it['quantity']})",
+            callback_data=f"cartrm_{it['product_id']}"
+        )])
+    buttons.append([InlineKeyboardButton(text="✅ Buyurtma berish", callback_data="cart_checkout")])
+    buttons.append([InlineKeyboardButton(text="➕ Yana qo'shish", callback_data="cart_add_more")])
+    buttons.append([InlineKeyboardButton(text="🗑 Savatni tozalash", callback_data="cart_clear")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def get_payment_keyboard() -> InlineKeyboardMarkup:

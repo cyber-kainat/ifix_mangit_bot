@@ -151,8 +151,14 @@ async def init_db():
         if not await _column_exists(db, "orders", "cost_at_sale"):
             # Sotilgan paytdagi tannarx (tarixiy foyda hisoboti uchun)
             await db.execute("ALTER TABLE orders ADD COLUMN cost_at_sale REAL DEFAULT 0")
+        if not await _column_exists(db, "orders", "group_id"):
+            # Savat (bir nechta mahsulot) bitta guruhga birlashtiriladi
+            await db.execute("ALTER TABLE orders ADD COLUMN group_id TEXT")
+        # Eski/yagona buyurtmalarga group_id beramiz (S<id>) — guruhlash bir xil ishlashi uchun
+        await db.execute("UPDATE orders SET group_id = 'S' || id WHERE group_id IS NULL")
 
         # ---- Indekslar ----
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_orders_group ON orders(group_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_users_tg ON users(telegram_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_models_brand ON models(brand_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_screens_model ON screens(model_id)")
@@ -685,10 +691,12 @@ async def get_low_stock_products(category_id: Optional[int] = None) -> list:
 
 async def add_order(user_id: int, product_id: int, quantity: int, total_price: float,
                     cost_at_sale: float, payment_method: str, pickup_type: str,
-                    payment_status: str = "paid", paid_amount: float = 0) -> int:
+                    payment_status: str = "paid", paid_amount: float = 0,
+                    group_id: str = None) -> int:
     """Buyurtma yaratish.
     payment_status: 'paid' (to'liq), 'debt' (qarz), 'partial' (qisman)
     cost_at_sale: butun buyurtmaning tannarxi (cost_price * quantity)
+    group_id: savatdagi mahsulotlarni birlashtirish uchun. None bo'lsa 'S<id>' beriladi.
     """
     if payment_status == "paid":
         paid_amount = total_price
@@ -696,13 +704,16 @@ async def add_order(user_id: int, product_id: int, quantity: int, total_price: f
         cursor = await db.execute(
             """INSERT INTO orders
                (user_id, product_id, screen_id, quantity, total_price, cost_at_sale,
-                payment_method, pickup_type, payment_status, paid_amount, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                payment_method, pickup_type, payment_status, paid_amount, created_at, group_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (user_id, product_id, product_id, quantity, total_price, cost_at_sale,
-             payment_method, pickup_type, payment_status, paid_amount, uz_now_str())
+             payment_method, pickup_type, payment_status, paid_amount, uz_now_str(), group_id)
         )
+        oid = cursor.lastrowid
+        if not group_id:
+            await db.execute("UPDATE orders SET group_id = ? WHERE id = ?", (f"S{oid}", oid))
         await db.commit()
-        return cursor.lastrowid
+        return oid
 
 
 async def get_order(order_id: int) -> Optional[dict]:
@@ -768,6 +779,104 @@ async def get_pending_orders() -> list:
 async def update_order_status(order_id: int, status: str):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("UPDATE orders SET status = ? WHERE id = ?", (status, order_id))
+        await db.commit()
+
+
+# ============ BUYURTMA GURUHLARI (savat + boshqaruv) ============
+
+async def list_order_groups(status: str = None, limit: int = 30) -> list:
+    """Buyurtmalarni guruh (savat) bo'yicha ro'yxatlaydi. status=None bo'lsa hammasi."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        query = """
+            SELECT o.group_id, MIN(o.id) AS min_id, o.status,
+                   o.payment_method, o.pickup_type, o.payment_status,
+                   MIN(o.created_at) AS created_at,
+                   u.full_name, u.phone, u.telegram_id,
+                   COUNT(*) AS items, SUM(o.quantity) AS units,
+                   SUM(o.total_price) AS total, SUM(o.paid_amount) AS paid
+            FROM orders o JOIN users u ON o.user_id = u.id
+        """
+        params = []
+        if status:
+            query += " WHERE o.status = ?"
+            params.append(status)
+        query += " GROUP BY o.group_id ORDER BY min_id DESC LIMIT ?"
+        params.append(limit)
+        cur = await db.execute(query, params)
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_order_group(group_id: str) -> Optional[dict]:
+    """Guruh sarlavhasi (mijoz, jami) + ichidagi mahsulotlar."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """SELECT o.group_id, o.status, o.payment_method, o.pickup_type, o.payment_status,
+                      o.created_at, u.full_name, u.phone, u.telegram_id, u.id AS user_db_id,
+                      COUNT(*) AS items, SUM(o.quantity) AS units,
+                      SUM(o.total_price) AS total, SUM(o.paid_amount) AS paid,
+                      SUM(o.total_price - o.paid_amount) AS debt
+               FROM orders o JOIN users u ON o.user_id = u.id
+               WHERE o.group_id = ? GROUP BY o.group_id""",
+            (group_id,)
+        )
+        head = await cur.fetchone()
+        if not head:
+            return None
+        cur = await db.execute(
+            """SELECT o.id, o.product_id, o.quantity, o.total_price, o.cost_at_sale,
+                      p.name AS product_name, c.icon AS category_icon,
+                      m.name AS model_name, b.name AS brand_name
+               FROM orders o
+               LEFT JOIN products p ON o.product_id = p.id
+               LEFT JOIN categories c ON p.category_id = c.id
+               LEFT JOIN models m ON p.model_id = m.id
+               LEFT JOIN brands b ON m.brand_id = b.id
+               WHERE o.group_id = ? ORDER BY o.id""",
+            (group_id,)
+        )
+        items = [dict(r) for r in await cur.fetchall()]
+        result = dict(head)
+        result["items"] = items
+        return result
+
+
+async def set_group_status(group_id: str, status: str):
+    """Guruhdagi barcha buyurtmalar statusini o'zgartiradi (sklad tegmaydi)."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("UPDATE orders SET status = ? WHERE group_id = ?", (status, group_id))
+        await db.commit()
+
+
+async def _restore_stock_for_group(db, group_id: str):
+    """Bekor qilinmagan qatorlar uchun skladni qaytaradi (ichki yordamchi)."""
+    db.row_factory = aiosqlite.Row
+    cur = await db.execute(
+        "SELECT product_id, quantity FROM orders WHERE group_id = ? AND status != 'bekor'",
+        (group_id,)
+    )
+    for row in await cur.fetchall():
+        if row["product_id"]:
+            await db.execute(
+                "UPDATE products SET quantity = quantity + ? WHERE id = ?",
+                (row["quantity"], row["product_id"])
+            )
+
+
+async def cancel_group(group_id: str):
+    """Guruhni bekor qiladi: skladni qaytaradi + status='bekor' (yozuv qoladi, hisobotda yo'q)."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await _restore_stock_for_group(db, group_id)
+        await db.execute("UPDATE orders SET status = 'bekor' WHERE group_id = ?", (group_id,))
+        await db.commit()
+
+
+async def delete_group(group_id: str):
+    """Guruhni butunlay o'chiradi: skladni qaytaradi + yozuvlarni o'chiradi (hisobotdan ham chiqadi)."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await _restore_stock_for_group(db, group_id)
+        await db.execute("DELETE FROM orders WHERE group_id = ?", (group_id,))
         await db.commit()
 
 
@@ -850,8 +959,9 @@ async def add_manual_sale(product_id: int, quantity: int, user_id: int,
         payment_method="naqd", pickup_type="shop",
         payment_status=payment_status, paid_amount=paid_amount,
     )
-    # To'liq to'langan — yakunlangan; qarz/qisman — tasdiqlangan (ikkalasi ham hisobotga kiradi)
-    await update_order_status(order_id, "yakunlandi" if payment_status == "paid" else "tasdiqlandi")
+    # Qo'lda sotuv = mahsulot qo'lma-qo'l berildi => darhol yakunlangan (to'lov holatidan qat'i nazar).
+    # Hisobotga kiradi; qarz/qisman bo'lsa qarz alohida kuzatiladi.
+    await update_order_status(order_id, "yakunlandi")
     await update_product_quantity(product_id, product["quantity"] - quantity)
 
     return {
@@ -1009,7 +1119,7 @@ async def get_statistics() -> dict:
         stats['completed_orders'] = (await cursor.fetchone())['cnt']
 
         cursor = await db.execute(
-            "SELECT COALESCE(SUM(total_price), 0) as total FROM orders WHERE status IN ('tasdiqlandi', 'yakunlandi')"
+            "SELECT COALESCE(SUM(total_price), 0) as total FROM orders WHERE status = 'yakunlandi'"
         )
         stats['total_revenue'] = (await cursor.fetchone())['total']
 
@@ -1041,7 +1151,7 @@ async def get_sales_summary(date_from: str, date_to: str) -> dict:
                  COALESCE(SUM(paid_amount), 0) as paid_received,
                  COALESCE(SUM(total_price - paid_amount), 0) as debt_added
                FROM orders
-               WHERE created_at BETWEEN ? AND ? AND status != 'bekor'""",
+               WHERE created_at BETWEEN ? AND ? AND status = 'yakunlandi'""",
             (df, dt)
         )
         row = await cursor.fetchone()
@@ -1070,7 +1180,7 @@ async def get_sales_by_category(date_from: str, date_to: str) -> list:
                FROM orders o
                LEFT JOIN products p ON o.product_id = p.id
                LEFT JOIN categories c ON p.category_id = c.id
-               WHERE o.created_at BETWEEN ? AND ? AND o.status != 'bekor'
+               WHERE o.created_at BETWEEN ? AND ? AND o.status = 'yakunlandi'
                GROUP BY c.id
                ORDER BY revenue DESC""",
             (df, dt)
@@ -1098,7 +1208,7 @@ async def get_sales_details(date_from: str, date_to: str) -> list:
                LEFT JOIN categories c ON p.category_id = c.id
                LEFT JOIN models m ON p.model_id = m.id
                LEFT JOIN brands b ON m.brand_id = b.id
-               WHERE o.created_at BETWEEN ? AND ? AND o.status != 'bekor'
+               WHERE o.created_at BETWEEN ? AND ? AND o.status = 'yakunlandi'
                ORDER BY o.created_at""",
             (df, dt)
         )
