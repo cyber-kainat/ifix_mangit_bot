@@ -278,10 +278,24 @@ def get_debt_orders_keyboard(orders: list) -> InlineKeyboardMarkup:
 
 # ============ TUGAB QOLAYOTGAN MAHSULOTLAR ============
 
-def get_sell_confirm_kb() -> InlineKeyboardMarkup:
-    """Qo'lda sotuvni tasdiqlash"""
+def get_sell_users_kb(users: list) -> InlineKeyboardMarkup:
+    """Tezkor sotuv: qaysi usta sotib oldi (yoki boshqa usta)"""
+    buttons = [[InlineKeyboardButton(text="🆕 Boshqa usta (tizimda yo'q)", callback_data="sell_other_user")]]
+    for u in users[:90]:
+        buttons.append([InlineKeyboardButton(
+            text=f"👤 {u['full_name']} - {u['phone']}",
+            callback_data=f"sellu_{u['id']}"
+        )])
+    buttons.append([InlineKeyboardButton(text="❌ Bekor", callback_data="admin_cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_sell_payment_kb() -> InlineKeyboardMarkup:
+    """Tezkor sotuv: to'lov holati"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Ha, sotildi", callback_data="sell_confirm")],
+        [InlineKeyboardButton(text="✅ To'liq to'ladi", callback_data="sellpay_paid")],
+        [InlineKeyboardButton(text="📒 Qarzga oldi", callback_data="sellpay_debt")],
+        [InlineKeyboardButton(text="💰 Qisman to'ladi", callback_data="sellpay_partial")],
         [InlineKeyboardButton(text="❌ Bekor", callback_data="admin_cancel")]
     ])
 

@@ -20,7 +20,7 @@ from keyboards.admin_kb import (
     get_user_action_keyboard, get_order_admin_keyboard,
     get_sales_period_keyboard, get_sales_report_actions,
     get_debtors_keyboard, get_debt_actions_keyboard, get_debt_orders_keyboard,
-    get_low_stock_keyboard, get_sell_confirm_kb,
+    get_low_stock_keyboard, get_sell_users_kb, get_sell_payment_kb,
     get_manage_brands_kb, get_brand_manage_kb, get_brand_delete_confirm_kb,
     get_manage_models_kb, get_model_manage_kb, get_model_delete_confirm_kb
 )
@@ -991,46 +991,163 @@ async def sell_enter_quantity(message: Message, state: FSMContext):
         await message.answer(f"❌ Omborda faqat {product['quantity']} dona bor. Kamroq kiriting:")
         return
 
-    total = float(product["price"]) * qty
-    profit = (float(product["price"]) - float(product["cost_price"])) * qty
     await state.update_data(sell_quantity=qty)
-    await state.set_state(SellStates.confirming)
+    await state.set_state(SellStates.choosing_user)
+    users = await db.get_sellable_users()
     await message.answer(
-        f"🧾 <b>Sotuvni tasdiqlang:</b>\n\n"
-        f"{product.get('category_icon','📦')} {_product_title(product)}\n"
-        f"📦 Miqdor: <b>{qty} dona</b>\n"
-        f"💰 Summa: <b>{int(total):,} so'm</b>\n"
-        f"📈 Foyda: <b>{int(profit):,} so'm</b>\n"
-        f"📦 Sotuvdan keyin qoladi: <b>{product['quantity'] - qty} dona</b>",
+        "👤 <b>Qaysi usta sotib oldi?</b>\n\n"
+        "Ro'yxatdan tanlang yoki <b>🆕 Boshqa usta</b> bosing:",
         parse_mode="HTML",
-        reply_markup=get_sell_confirm_kb()
+        reply_markup=get_sell_users_kb(users)
     )
 
 
-@router.callback_query(F.data == "sell_confirm", SellStates.confirming)
-async def sell_do_confirm(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(F.data.startswith("sellu_"), SellStates.choosing_user)
+async def sell_pick_user(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    user_id = int(callback.data.split("_")[1])
+    user = await db.get_user_by_id(user_id)
+    await state.update_data(sell_user_id=user_id)
+    await _ask_sell_payment(callback.message, state, edit=True,
+                            buyer=user["full_name"] if user else "Usta")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "sell_other_user", SellStates.choosing_user)
+async def sell_other_user(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    await state.set_state(SellStates.waiting_other_name)
+    await callback.message.edit_text(
+        "✍️ <b>Ustaning ism-familiyasini kiriting:</b>\n\n"
+        "<i>Qarz/qisman bo'lsa, qarz shu nom ostida saqlanadi va keyin "
+        "'💳 Qarzlar' bo'limida ko'rinadi.\n"
+        "Noma'lum bo'lsa '-' yuboring.</i>",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.message(SellStates.waiting_other_name, F.text)
+async def sell_other_name(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    name = message.text.strip()
+    if name == "-" or not name:
+        user_id = await db.get_or_create_walkin_user()
+        buyer = "🏪 Boshqa usta (noma'lum)"
+    else:
+        if len(name) > 100:
+            await message.answer("❌ Juda uzun. Qisqaroq kiriting:")
+            return
+        user_id = await db.get_or_create_offline_user(name)
+        buyer = name
+    await state.update_data(sell_user_id=user_id)
+    await _ask_sell_payment(message, state, edit=False, buyer=buyer)
+
+
+async def _ask_sell_payment(target_message, state: FSMContext, edit: bool, buyer: str):
+    data = await state.get_data()
+    product = await db.get_product(data["sell_product_id"])
+    qty = data["sell_quantity"]
+    total = float(product["price"]) * qty
+    profit = (float(product["price"]) - float(product["cost_price"])) * qty
+
+    await state.update_data(sell_buyer=buyer)
+    await state.set_state(SellStates.choosing_payment)
+    text = (
+        f"🧾 <b>Sotuv:</b>\n\n"
+        f"👤 Usta: <b>{buyer}</b>\n"
+        f"{product.get('category_icon','📦')} {_product_title(product)}\n"
+        f"📦 {qty} dona\n"
+        f"💰 Summa: <b>{int(total):,} so'm</b>\n"
+        f"📈 Foyda: <b>{int(profit):,} so'm</b>\n"
+        f"📦 Qoladi: <b>{product['quantity'] - qty} dona</b>\n\n"
+        f"<b>To'lov holati?</b>"
+    )
+    if edit:
+        await target_message.edit_text(text, parse_mode="HTML", reply_markup=get_sell_payment_kb())
+    else:
+        await target_message.answer(text, parse_mode="HTML", reply_markup=get_sell_payment_kb())
+
+
+@router.callback_query(F.data == "sellpay_paid", SellStates.choosing_payment)
+async def sell_pay_paid(callback: CallbackQuery, state: FSMContext):
+    await _finalize_sale_cb(callback, state, "paid", None)
+
+
+@router.callback_query(F.data == "sellpay_debt", SellStates.choosing_payment)
+async def sell_pay_debt(callback: CallbackQuery, state: FSMContext):
+    await _finalize_sale_cb(callback, state, "debt", None)
+
+
+@router.callback_query(F.data == "sellpay_partial", SellStates.choosing_payment)
+async def sell_pay_partial(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
         return
     data = await state.get_data()
-    res = await db.add_manual_sale(data.get("sell_product_id"), data.get("sell_quantity"))
+    product = await db.get_product(data["sell_product_id"])
+    total = float(product["price"]) * data["sell_quantity"]
+    await state.set_state(SellStates.waiting_partial)
+    await callback.message.edit_text(
+        f"💰 Jami: <b>{int(total):,} so'm</b>\n\n"
+        f"Usta qancha to'ladi? Raqam kiriting:",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.message(SellStates.waiting_partial, F.text)
+async def sell_partial_amount(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    try:
+        amount = float(message.text.strip().replace(" ", "").replace(",", ""))
+        if amount < 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Raqam kiriting:")
+        return
+    text = await _finalize_sale(state, "partial", amount)
+    await message.answer(text, parse_mode="HTML", reply_markup=get_admin_menu())
+
+
+async def _finalize_sale(state: FSMContext, payment_status: str, amount) -> str:
+    """Sotuvni yakunlaydi va natija matnini qaytaradi."""
+    data = await state.get_data()
+    res = await db.add_manual_sale(
+        data["sell_product_id"], data["sell_quantity"],
+        data["sell_user_id"], payment_status, amount
+    )
+    buyer = data.get("sell_buyer", "")
     await state.clear()
 
     if res.get("error") == "stock":
-        await callback.message.edit_text(
-            f"❌ Omborda yetarli emas (faqat {res['available']} dona). Sotuv bekor qilindi."
-        )
-    elif res.get("error"):
-        await callback.message.edit_text("❌ Xato: mahsulot topilmadi.")
-    else:
-        await callback.message.edit_text(
-            f"✅ <b>Sotuv qayd etildi!</b>\n\n"
-            f"🆔 #{res['order_id']}\n"
-            f"💰 Summa: <b>{int(res['total']):,} so'm</b>\n"
-            f"📈 Foyda: <b>{int(res['profit']):,} so'm</b>\n"
-            f"📦 Omborda qoldi: <b>{res['remaining']} dona</b>\n\n"
-            f"<i>Hisobot va statistikaga qo'shildi.</i>",
-            parse_mode="HTML"
-        )
+        return f"❌ Omborda yetarli emas (faqat {res['available']} dona). Bekor qilindi."
+    if res.get("error"):
+        return "❌ Xato: mahsulot topilmadi."
+
+    pstatus_txt = {"paid": "✅ To'liq to'ladi", "debt": "📒 Qarz", "partial": "💰 Qisman"}[payment_status]
+    text = (
+        f"✅ <b>Sotuv qayd etildi!</b>\n\n"
+        f"🆔 #{res['order_id']}\n"
+        f"👤 Usta: <b>{buyer}</b>\n"
+        f"💰 Summa: <b>{int(res['total']):,} so'm</b>\n"
+        f"📈 Foyda: <b>{int(res['profit']):,} so'm</b>\n"
+        f"💼 To'lov: <b>{pstatus_txt}</b>\n"
+    )
+    if res["debt"] > 0:
+        text += f"📒 Qarz qoldi: <b>{int(res['debt']):,} so'm</b>\n"
+    text += f"📦 Omborda qoldi: <b>{res['remaining']} dona</b>\n\n<i>Hisobotga qo'shildi.</i>"
+    return text
+
+
+async def _finalize_sale_cb(callback: CallbackQuery, state: FSMContext, payment_status: str, amount):
+    if not is_admin(callback.from_user.id):
+        return
+    text = await _finalize_sale(state, payment_status, amount)
+    await callback.message.edit_text(text, parse_mode="HTML")
     await callback.answer()
     await callback.message.answer("Admin paneli:", reply_markup=get_admin_menu())
 

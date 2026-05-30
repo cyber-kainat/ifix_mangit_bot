@@ -77,4 +77,7 @@ class DebtStates(StatesGroup):
 class SellStates(StatesGroup):
     """Admin qo'lda tezkor sotuv (do'kondan naqd)"""
     waiting_quantity = State()
-    confirming = State()
+    choosing_user = State()
+    waiting_other_name = State()
+    choosing_payment = State()
+    waiting_partial = State()

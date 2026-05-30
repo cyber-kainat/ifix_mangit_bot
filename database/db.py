@@ -275,8 +275,7 @@ async def get_all_users() -> list:
     async with aiosqlite.connect(DB_NAME) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            "SELECT * FROM users WHERE telegram_id != ? ORDER BY created_at DESC",
-            (WALKIN_TG_ID,)
+            "SELECT * FROM users WHERE telegram_id > 1 ORDER BY created_at DESC"
         )
         return [dict(row) for row in await cursor.fetchall()]
 
@@ -789,27 +788,70 @@ async def get_or_create_walkin_user() -> int:
         return cur.lastrowid
 
 
-async def add_manual_sale(product_id: int, quantity: int) -> dict:
-    """Admin qo'lda sotuvni qayd etadi: skladdan ayiradi + hisobotga 'yakunlangan naqd savdo' sifatida yozadi.
-    Qaytaradi: {'order_id','total','profit','remaining'} yoki {'error':...}"""
+async def get_or_create_offline_user(full_name: str, phone: str = "-") -> int:
+    """Tizimda bo'lmagan ('boshqa usta') uchun yozuv. Bir xil ism bo'lsa qayta ishlatadi
+    (qarz bitta odam ostida yig'ilishi uchun). Telegram ID manfiy (sun'iy) beriladi."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT id FROM users WHERE telegram_id < 1 AND full_name = ? COLLATE NOCASE",
+            (full_name,)
+        )
+        row = await cur.fetchone()
+        if row:
+            return row["id"]
+        cur = await db.execute("SELECT COALESCE(MIN(telegram_id), 0) AS mn FROM users")
+        mn = (await cur.fetchone())["mn"]
+        new_tg = mn - 1 if mn < 0 else -1
+        cur = await db.execute(
+            """INSERT INTO users (telegram_id, full_name, phone, username, is_approved, created_at)
+               VALUES (?, ?, ?, ?, 1, ?)""",
+            (new_tg, full_name, phone, None, uz_now_str())
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def get_sellable_users() -> list:
+    """Tezkor sotuvda tanlash uchun: bot orqali ro'yxatdan o'tgan, tasdiqlangan ustalar."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM users WHERE is_approved = 1 AND is_blocked = 0 AND telegram_id > 1 "
+            "ORDER BY full_name"
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def add_manual_sale(product_id: int, quantity: int, user_id: int,
+                          payment_status: str = "paid", paid_amount: float = None) -> dict:
+    """Admin qo'lda sotuvni qayd etadi: skladdan ayiradi + hisobotga yozadi.
+    payment_status: 'paid' (to'liq) | 'debt' (qarz) | 'partial' (qisman).
+    Qaytaradi: {'order_id','total','profit','remaining','debt'} yoki {'error':...}"""
     product = await get_product(product_id)
     if not product:
         return {"error": "topilmadi"}
     if product["quantity"] < quantity:
         return {"error": "stock", "available": product["quantity"]}
 
-    user_id = await get_or_create_walkin_user()
     total = float(product["price"]) * quantity
     cost = float(product["cost_price"]) * quantity
+
+    if payment_status == "paid":
+        paid_amount = total
+    elif payment_status == "debt":
+        paid_amount = 0
+    else:  # partial
+        paid_amount = max(0.0, min(float(paid_amount or 0), total))
 
     order_id = await add_order(
         user_id=user_id, product_id=product_id, quantity=quantity,
         total_price=total, cost_at_sale=cost,
         payment_method="naqd", pickup_type="shop",
-        payment_status="paid", paid_amount=total,
+        payment_status=payment_status, paid_amount=paid_amount,
     )
-    # Qo'lda sotuv darhol yakunlangan hisoblanadi (kutilayotgan buyurtmalar ro'yxatiga tushmaydi)
-    await update_order_status(order_id, "yakunlandi")
+    # To'liq to'langan — yakunlangan; qarz/qisman — tasdiqlangan (ikkalasi ham hisobotga kiradi)
+    await update_order_status(order_id, "yakunlandi" if payment_status == "paid" else "tasdiqlandi")
     await update_product_quantity(product_id, product["quantity"] - quantity)
 
     return {
@@ -817,6 +859,7 @@ async def add_manual_sale(product_id: int, quantity: int) -> dict:
         "total": total,
         "profit": total - cost,
         "remaining": product["quantity"] - quantity,
+        "debt": total - paid_amount,
     }
 
 
@@ -924,12 +967,11 @@ async def get_statistics() -> dict:
         db.row_factory = aiosqlite.Row
         stats = {}
 
-        cursor = await db.execute("SELECT COUNT(*) as cnt FROM users WHERE telegram_id != ?", (WALKIN_TG_ID,))
+        cursor = await db.execute("SELECT COUNT(*) as cnt FROM users WHERE telegram_id > 1")
         stats['total_users'] = (await cursor.fetchone())['cnt']
 
         cursor = await db.execute(
-            "SELECT COUNT(*) as cnt FROM users WHERE is_approved = 1 AND telegram_id != ?",
-            (WALKIN_TG_ID,)
+            "SELECT COUNT(*) as cnt FROM users WHERE is_approved = 1 AND telegram_id > 1"
         )
         stats['approved_users'] = (await cursor.fetchone())['cnt']
 
