@@ -1,8 +1,10 @@
 """
 Foydalanuvchi handlerlari - /start, ro'yxatdan o'tish, asosiy menyu
 """
+import os
+import aiohttp
 from aiogram import Router, F
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import CommandStart, Command, CommandObject
 from aiogram.types import Message, ReplyKeyboardRemove
 from aiogram.fsm.context import FSMContext
 
@@ -15,9 +17,35 @@ from config import config
 router = Router()
 
 
+async def _confirm_app_login(token: str, telegram_id: int) -> bool:
+    """Ilova (EkranShop) login tokenini backend'da tasdiqlaydi."""
+    backend = os.getenv("BACKEND_URL", "").rstrip("/")
+    if not backend:
+        return False
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(
+                f"{backend}/auth/telegram/confirm",
+                json={"token": token, "telegram_id": telegram_id},
+                headers={"X-Bot-Secret": os.getenv("BOT_AUTH_SECRET", "")},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                return r.status == 200
+    except Exception:
+        return False
+
+
 @router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext):
+async def cmd_start(message: Message, state: FSMContext, command: CommandObject):
     await state.clear()
+    # Ilovaga kirish (deep-link: login_<token>)
+    if command.args and command.args.startswith("login_"):
+        ok = await _confirm_app_login(command.args[6:], message.from_user.id)
+        await message.answer(
+            "✅ <b>Ilovaga kirdingiz!</b> Endi ilovaga qayting."
+            if ok else "❌ Kirish amalga oshmadi. Ilovada qayta urinib ko'ring.",
+            parse_mode="HTML")
+        return
     user = await db.get_user(message.from_user.id)
     
     if user is None:
