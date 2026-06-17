@@ -29,7 +29,13 @@ async def on_startup(bot: Bot):
     """Bot ishga tushganda chaqiriladi"""
     await init_db()
     print("✅ Ma'lumotlar bazasi tayyor!")
-    
+
+    # Bir martalik: eski SQLite ma'lumotini Postgres'ga ko'chirish
+    if os.getenv("RUN_MIGRATION") == "1":
+        print("🔄 SQLite -> Postgres ko'chirish...")
+        from database.migrate_pg import migrate
+        await migrate()
+
     # Adminlarga xabar
     for admin_id in config.ADMIN_IDS:
         try:

@@ -3,7 +3,7 @@ SQLite ma'lumotlar bazasi - barcha jadvallar va funksiyalar
 Yangilangan: kategoriyalar, tannarx (cost_price), qarz, foyda hisoboti
 """
 import os
-import aiosqlite
+from database import pgcompat as aiosqlite  # DATABASE_URL bo'lsa Postgres, aks holda aiosqlite
 from datetime import datetime
 from typing import Optional
 
