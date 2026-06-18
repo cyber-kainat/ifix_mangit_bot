@@ -44,7 +44,9 @@ else:
                 out.append(ch)
         sql = "".join(out)
         sql = re.sub(r"INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT",
-                     "SERIAL PRIMARY KEY", sql, flags=re.I)
+                     "BIGSERIAL PRIMARY KEY", sql, flags=re.I)
+        # SQLite INTEGER = 64-bit; PG INTEGER = 32-bit (telegram_id sig'maydi) -> BIGINT
+        sql = re.sub(r"\bINTEGER\b", "BIGINT", sql, flags=re.I)
         sql = re.sub(r"\s+COLLATE\s+NOCASE", "", sql, flags=re.I)
         # SQLite LIKE katta-kichik harfga befarq — PG'da ILIKE shunday
         sql = re.sub(r"\bLIKE\b", "ILIKE", sql, flags=re.I)

@@ -1289,3 +1289,14 @@ async def get_sales_details(date_from: str, date_to: str) -> list:
             (df, dt)
         )
         return [dict(row) for row in await cursor.fetchall()]
+
+
+async def set_product_image(product_id: int, url: str) -> bool:
+    """Mahsulotga rasm (image_url) qo'yish — admin bot /rasm orqali."""
+    p = await get_product(product_id)
+    if not p:
+        return False
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("UPDATE products SET image_url = ? WHERE id = ?", (url, product_id))
+        await db.commit()
+    return True

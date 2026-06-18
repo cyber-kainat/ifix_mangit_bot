@@ -22,7 +22,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import config
 from database.db import init_db
-from handlers import user_handlers, catalog_handlers, admin_handlers
+from handlers import user_handlers, catalog_handlers, admin_handlers, photo_handlers
 
 
 async def on_startup(bot: Bot):
@@ -71,6 +71,7 @@ async def main():
     
     # Routerlarni ulash - tartibi muhim!
     # Admin handler birinchi (admin uchun maxsus tugmalar)
+    dp.include_router(photo_handlers.router)
     dp.include_router(admin_handlers.router)
     dp.include_router(catalog_handlers.router)
     dp.include_router(user_handlers.router)
