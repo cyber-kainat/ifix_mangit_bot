@@ -1300,3 +1300,57 @@ async def set_product_image(product_id: int, url: str) -> bool:
         await db.execute("UPDATE products SET image_url = ? WHERE id = ?", (url, product_id))
         await db.commit()
     return True
+
+
+async def set_product_discount(product_id: int, old_price: float, new_price: float, discount_until: str) -> bool:
+    """Chegirma: old_price=eski narx, price=yangi (chegirmali) narx, discount_until=tugash sanasi."""
+    p = await get_product(product_id)
+    if not p:
+        return False
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "UPDATE products SET old_price=?, price=?, discount_until=? WHERE id=?",
+            (old_price, new_price, discount_until or None, product_id))
+        await db.commit()
+    return True
+
+
+async def clear_product_discount(product_id: int) -> bool:
+    """Chegirmani bekor qilish — narxni eski narxga qaytaradi."""
+    p = await get_product(product_id)
+    if not p:
+        return False
+    async with aiosqlite.connect(DB_NAME) as db:
+        if p.get('old_price'):
+            await db.execute(
+                "UPDATE products SET price=old_price, old_price=NULL, discount_until=NULL WHERE id=?",
+                (product_id,))
+        else:
+            await db.execute(
+                "UPDATE products SET old_price=NULL, discount_until=NULL WHERE id=?",
+                (product_id,))
+        await db.commit()
+    return True
+
+
+async def add_banner(image_url: str) -> int:
+    async with aiosqlite.connect(DB_NAME) as db:
+        cur = await db.execute(
+            "INSERT INTO banners (image_url, created_at) VALUES (?, ?)",
+            (image_url, uz_now_str()))
+        await db.commit()
+        return cur.lastrowid
+
+
+async def get_banners() -> list:
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM banners ORDER BY id DESC")
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def delete_banner(banner_id: int) -> bool:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("DELETE FROM banners WHERE id=?", (banner_id,))
+        await db.commit()
+    return True
