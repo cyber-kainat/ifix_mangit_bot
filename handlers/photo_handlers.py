@@ -200,3 +200,39 @@ async def banner_delete(message: Message):
         return
     await db.delete_banner(int(parts[1]))
     await message.answer("✅ Banner o'chirildi.")
+
+
+# ===== Aloqa / ijtimoiy tarmoq sozlamalari =====
+
+async def _set_setting_cmd(message: Message, key: str, label: str):
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        cur = (await db.get_settings()).get(key, "—")
+        await message.answer(
+            f"Hozirgi {label}: {cur}\n\n"
+            f"O'zgartirish uchun yangi qiymatni yozing.\n"
+            f"Masalan: {parts[0]} +998901234567")
+        return
+    await db.set_setting(key, parts[1].strip())
+    await message.answer(f"✅ {label} yangilandi: {parts[1].strip()}")
+
+
+@router.message(Command("aloqa"))
+async def set_contact(message: Message):
+    if not _is_admin(message.from_user.id):
+        return
+    await _set_setting_cmd(message, "contact_phone", "aloqa telefoni")
+
+
+@router.message(Command("telegram"))
+async def set_telegram(message: Message):
+    if not _is_admin(message.from_user.id):
+        return
+    await _set_setting_cmd(message, "telegram_url", "Telegram havolasi")
+
+
+@router.message(Command("instagram"))
+async def set_instagram(message: Message):
+    if not _is_admin(message.from_user.id):
+        return
+    await _set_setting_cmd(message, "instagram_url", "Instagram havolasi")

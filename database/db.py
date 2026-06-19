@@ -1354,3 +1354,19 @@ async def delete_banner(banner_id: int) -> bool:
         await db.execute("DELETE FROM banners WHERE id=?", (banner_id,))
         await db.commit()
     return True
+
+
+async def get_settings() -> dict:
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT key, value FROM settings")
+        return {r['key']: r['value'] for r in await cur.fetchall()}
+
+
+async def set_setting(key: str, value: str) -> None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=?",
+            (key, value, value))
+        await db.commit()
