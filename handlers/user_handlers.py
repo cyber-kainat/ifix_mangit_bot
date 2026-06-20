@@ -153,7 +153,10 @@ async def process_phone_contact(message: Message, state: FSMContext, bot):
 @router.message(RegisterStates.waiting_for_phone, F.text)
 async def process_phone_text(message: Message, state: FSMContext, bot):
     phone = message.text.strip().replace(" ", "").replace("-", "")
-    
+    if len(phone) > 20:
+        await message.answer("❌ Telefon raqami juda uzun. Qaytadan kiriting:")
+        return
+
     # Oddiy tekshiruv
     if not phone.startswith("+"):
         if phone.startswith("998"):
