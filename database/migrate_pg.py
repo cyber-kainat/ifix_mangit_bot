@@ -22,6 +22,16 @@ async def migrate():
     s.row_factory = sqlite3.Row
     pg = await asyncpg.connect(pg_url)
     try:
+        # XAVFSIZLIK: takror ishga tushsa ma'lumot ikkilanmasligi uchun —
+        # PG'da allaqachon mahsulot bo'lsa, ko'chirishni o'tkazib yuboramiz.
+        try:
+            existing = await pg.fetchval("SELECT COUNT(*) FROM products")
+        except Exception:
+            existing = 0
+        if existing and existing > 0:
+            print(f"⏭ PG'da allaqachon {existing} ta mahsulot bor — "
+                  "ko'chirish o'tkazib yuborildi (takrorlanish oldini olindi)")
+            return
         tables = [r[0] for r in s.execute(
             "SELECT name FROM sqlite_master WHERE type='table' "
             "AND name NOT LIKE 'sqlite_%'").fetchall()]

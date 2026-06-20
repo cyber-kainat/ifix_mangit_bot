@@ -51,7 +51,7 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
             InlineKeyboardButton(text="❌ Yo'q", callback_data="applogin_no"),
         ]])
         await message.answer(
-            "🔐 <b>EkranShop ilovasiga kirishni tasdiqlaysizmi?</b>\n\n"
+            "🔐 <b>iFix Shop ilovasiga kirishni tasdiqlaysizmi?</b>\n\n"
             "Agar bu so'rovni <b>siz</b> boshlagan bo'lsangiz — \"Ha\" ni bosing.\n"
             "Agar havolani boshqa birov yuborgan bo'lsa — \"Yo'q\" ni bosing.",
             parse_mode="HTML", reply_markup=kb)
