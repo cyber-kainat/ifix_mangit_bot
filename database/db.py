@@ -877,7 +877,9 @@ async def list_order_groups(status: str = None, limit: int = 30) -> list:
         if status:
             query += " WHERE o.status = ?"
             params.append(status)
-        query += " GROUP BY o.group_id ORDER BY min_id DESC LIMIT ?"
+        query += (" GROUP BY o.group_id, o.status, o.payment_method, "
+                  "o.pickup_type, o.payment_status, u.full_name, u.phone, "
+                  "u.telegram_id ORDER BY min_id DESC LIMIT ?")
         params.append(limit)
         cur = await db.execute(query, params)
         return [dict(r) for r in await cur.fetchall()]
@@ -889,12 +891,14 @@ async def get_order_group(group_id: str) -> Optional[dict]:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
             """SELECT o.group_id, o.status, o.payment_method, o.pickup_type, o.payment_status,
-                      o.created_at, u.full_name, u.phone, u.telegram_id, u.id AS user_db_id,
+                      MIN(o.created_at) AS created_at, u.full_name, u.phone, u.telegram_id, u.id AS user_db_id,
                       COUNT(*) AS items, SUM(o.quantity) AS units,
                       SUM(o.total_price) AS total, SUM(o.paid_amount) AS paid,
                       SUM(o.total_price - o.paid_amount) AS debt
                FROM orders o JOIN users u ON o.user_id = u.id
-               WHERE o.group_id = ? GROUP BY o.group_id""",
+               WHERE o.group_id = ?
+               GROUP BY o.group_id, o.status, o.payment_method, o.pickup_type,
+                        o.payment_status, u.id, u.full_name, u.phone, u.telegram_id""",
             (group_id,)
         )
         head = await cur.fetchone()
@@ -1100,7 +1104,7 @@ async def get_all_debtors() -> list:
                JOIN orders o ON o.user_id = u.id
                WHERE o.payment_status IN ('debt', 'partial') AND o.status != 'bekor'
                GROUP BY u.id
-               HAVING total_debt > 0
+               HAVING COALESCE(SUM(o.total_price - o.paid_amount), 0) > 0
                ORDER BY total_debt DESC"""
         )
         return [dict(row) for row in await cursor.fetchall()]
