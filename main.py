@@ -19,16 +19,50 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import (BotCommand, BotCommandScopeDefault,
+                           BotCommandScopeChat)
 
 from config import config
 from database.db import init_db
 from handlers import user_handlers, catalog_handlers, admin_handlers, photo_handlers
 
 
+async def _set_commands(bot: Bot):
+    """Telegram '/' menyusini sozlash.
+    Oddiy mijozlarga faqat /start; admin buyruqlari faqat adminlarga ko'rinadi."""
+    # Hammaga
+    await bot.set_my_commands(
+        [BotCommand(command="start", description="Boshlash / Ro'yxatdan o'tish")],
+        scope=BotCommandScopeDefault(),
+    )
+    # Faqat adminlarga
+    admin_cmds = [
+        BotCommand(command="admin", description="🛠 Admin paneli"),
+        BotCommand(command="rasm", description="🖼 Mahsulotga rasm qo'yish"),
+        BotCommand(command="chegirma", description="💸 Chegirma qo'yish"),
+        BotCommand(command="chegirma_ochir", description="❌ Chegirmani bekor qilish"),
+        BotCommand(command="banner", description="📢 Banner qo'shish"),
+        BotCommand(command="bannerlar", description="📋 Bannerlar ro'yxati"),
+        BotCommand(command="banner_ochir", description="🗑 Bannerni o'chirish"),
+        BotCommand(command="aloqa", description="📞 Aloqa telefonini o'zgartirish"),
+        BotCommand(command="telegram", description="✈️ Telegram havolasini o'zgartirish"),
+        BotCommand(command="instagram", description="📷 Instagram havolasini o'zgartirish"),
+    ]
+    for admin_id in config.ADMIN_IDS:
+        try:
+            await bot.set_my_commands(
+                admin_cmds, scope=BotCommandScopeChat(chat_id=admin_id))
+        except Exception as e:
+            print(f"Admin {admin_id} buyruqlarini o'rnatib bo'lmadi: {e}")
+
+
 async def on_startup(bot: Bot):
     """Bot ishga tushganda chaqiriladi"""
     await init_db()
     print("✅ Ma'lumotlar bazasi tayyor!")
+
+    # '/' buyruq menyusini sozlash
+    await _set_commands(bot)
 
     # Bir martalik: eski SQLite ma'lumotini Postgres'ga ko'chirish
     if os.getenv("RUN_MIGRATION") == "1":
