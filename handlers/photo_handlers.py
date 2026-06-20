@@ -39,6 +39,9 @@ async def rasm_start(message: Message, state: FSMContext):
 
 @router.message(PhotoStates.waiting_id, F.text)
 async def rasm_id(message: Message, state: FSMContext):
+    if not _is_admin(message.from_user.id):
+        await state.clear()
+        return
     txt = message.text.strip()
     if not txt.isdigit():
         await message.answer("Iltimos, faqat raqam yuboring (mahsulot ID).")
@@ -50,6 +53,9 @@ async def rasm_id(message: Message, state: FSMContext):
 
 @router.message(PhotoStates.waiting_photo, F.photo)
 async def rasm_photo(message: Message, state: FSMContext):
+    if not _is_admin(message.from_user.id):
+        await state.clear()
+        return
     data = await state.get_data()
     pid = data.get("pid")
     file_id = message.photo[-1].file_id
@@ -86,6 +92,9 @@ async def disc_start(message: Message, state: FSMContext):
 
 @router.message(DiscountStates.waiting_id, F.text)
 async def disc_id(message: Message, state: FSMContext):
+    if not _is_admin(message.from_user.id):
+        await state.clear()
+        return
     if not message.text.strip().isdigit():
         await message.answer("Raqam yuboring.")
         return
@@ -104,6 +113,9 @@ async def disc_id(message: Message, state: FSMContext):
 
 @router.message(DiscountStates.waiting_percent, F.text)
 async def disc_percent(message: Message, state: FSMContext):
+    if not _is_admin(message.from_user.id):
+        await state.clear()
+        return
     t = message.text.strip()
     if not t.isdigit() or not (1 <= int(t) <= 99):
         await message.answer("1-99 oralig'ida raqam yuboring.")
@@ -116,11 +128,16 @@ async def disc_percent(message: Message, state: FSMContext):
 
 @router.message(DiscountStates.waiting_days, F.text)
 async def disc_days(message: Message, state: FSMContext):
+    if not _is_admin(message.from_user.id):
+        await state.clear()
+        return
     t = message.text.strip()
     if not t.isdigit():
         await message.answer("Raqam yuboring (0 = muddatsiz).")
         return
     days = int(t)
+    if days > 365:
+        days = 365  # eng ko'pi bilan 1 yil
     data = await state.get_data()
     old = float(data['price'])
     percent = data['percent']
@@ -164,6 +181,9 @@ async def banner_start(message: Message, state: FSMContext):
 
 @router.message(BannerStates.waiting_photo, F.photo)
 async def banner_photo(message: Message, state: FSMContext):
+    if not _is_admin(message.from_user.id):
+        await state.clear()
+        return
     file_id = message.photo[-1].file_id
     backend = os.getenv("BACKEND_URL", "").rstrip("/")
     bid = await db.add_banner(f"{backend}/tgphoto/{file_id}")
@@ -213,8 +233,21 @@ async def _set_setting_cmd(message: Message, key: str, label: str):
             f"O'zgartirish uchun yangi qiymatni yozing.\n"
             f"Masalan: {parts[0]} +998901234567")
         return
-    await db.set_setting(key, parts[1].strip())
-    await message.answer(f"✅ {label} yangilandi: {parts[1].strip()}")
+    value = parts[1].strip()
+    # Tekshiruv: uzunlik va havola ko'rinishi
+    if len(value) > 300:
+        await message.answer("❌ Qiymat juda uzun (300 belgidan kam bo'lsin).")
+        return
+    if key in ("telegram_url", "instagram_url"):
+        low = value.lower()
+        if not (low.startswith("https://") or low.startswith("http://")
+                or low.startswith("@")):
+            await message.answer(
+                "❌ Havola https:// bilan boshlanishi kerak.\n"
+                "Masalan: https://t.me/ifix_mangit yoki https://instagram.com/ekranshop")
+            return
+    await db.set_setting(key, value)
+    await message.answer(f"✅ {label} yangilandi: {value}")
 
 
 @router.message(Command("aloqa"))

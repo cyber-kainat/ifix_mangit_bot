@@ -56,10 +56,10 @@ async def main():
         stream=sys.stdout
     )
     
-    # Token tekshiruvi
-    if config.BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
+    # Token tekshiruvi — endi env'dan keladi
+    if not config.BOT_TOKEN or config.BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
         print("❌ XATO: BOT_TOKEN o'rnatilmagan!")
-        print("config.py ni oching va BOT_TOKEN ni @BotFather dan olingan token bilan to'ldiring.")
+        print("Railway -> ifix_mangit_bot -> Variables ga BOT_TOKEN ni qo'ying.")
         return
     
     # Bot va dispatcher

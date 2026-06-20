@@ -2,10 +2,12 @@
 Foydalanuvchi handlerlari - /start, ro'yxatdan o'tish, asosiy menyu
 """
 import os
+import html
 import aiohttp
 from aiogram import Router, F
 from aiogram.filters import CommandStart, Command, CommandObject
-from aiogram.types import Message, ReplyKeyboardRemove
+from aiogram.types import (Message, ReplyKeyboardRemove, CallbackQuery,
+                           InlineKeyboardMarkup, InlineKeyboardButton)
 from aiogram.fsm.context import FSMContext
 
 from database import db
@@ -39,12 +41,20 @@ async def _confirm_app_login(token: str, telegram_id: int) -> bool:
 async def cmd_start(message: Message, state: FSMContext, command: CommandObject):
     await state.clear()
     # Ilovaga kirish (deep-link: login_<token>)
+    # XAVFSIZLIK: avtomatik tasdiqlamaymiz. Foydalanuvchi ataylab tugma bossin —
+    # shunda begona havola orqali birovni "jim" tarzda kiritib yuborib bo'lmaydi.
     if command.args and command.args.startswith("login_"):
-        ok = await _confirm_app_login(command.args[6:], message.from_user.id)
+        token = command.args[6:]
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="✅ Ha, men kiraman",
+                                 callback_data=f"applogin:{token}"),
+            InlineKeyboardButton(text="❌ Yo'q", callback_data="applogin_no"),
+        ]])
         await message.answer(
-            "✅ <b>Ilovaga kirdingiz!</b> Endi ilovaga qayting."
-            if ok else "❌ Kirish amalga oshmadi. Ilovada qayta urinib ko'ring.",
-            parse_mode="HTML")
+            "🔐 <b>EkranShop ilovasiga kirishni tasdiqlaysizmi?</b>\n\n"
+            "Agar bu so'rovni <b>siz</b> boshlagan bo'lsangiz — \"Ha\" ni bosing.\n"
+            "Agar havolani boshqa birov yuborgan bo'lsa — \"Yo'q\" ni bosing.",
+            parse_mode="HTML", reply_markup=kb)
         return
     user = await db.get_user(message.from_user.id)
     
@@ -78,11 +88,31 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
     else:
         # Tasdiqlangan foydalanuvchi
         await message.answer(
-            f"👋 Salom, <b>{user['full_name']}</b>!\n\n"
+            f"👋 Salom, <b>{html.escape(str(user['full_name']))}</b>!\n\n"
             "Quyidagi tugmalardan birini tanlang:",
             parse_mode="HTML",
             reply_markup=get_main_menu()
         )
+
+
+@router.callback_query(F.data.startswith("applogin:"))
+async def app_login_confirm(callback: CallbackQuery):
+    """Ilovaga kirishni foydalanuvchi tugma bilan tasdiqlaganda."""
+    token = callback.data.split(":", 1)[1]
+    ok = await _confirm_app_login(token, callback.from_user.id)
+    await callback.message.edit_text(
+        "✅ <b>Ilovaga kirdingiz!</b> Endi ilovaga qayting."
+        if ok else "❌ Kirish amalga oshmadi. Ilovada qayta urinib ko'ring.",
+        parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "applogin_no")
+async def app_login_decline(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "🚫 Kirish bekor qilindi. Agar bu so'rovni siz boshlamagan bo'lsangiz — "
+        "hech narsa qilmang, hisobingiz xavfsiz.")
+    await callback.answer()
 
 
 @router.message(RegisterStates.waiting_for_name, F.text)
@@ -98,7 +128,7 @@ async def process_name(message: Message, state: FSMContext):
     
     await state.update_data(full_name=name)
     await message.answer(
-        f"✅ <b>{name}</b>\n\n"
+        f"✅ <b>{html.escape(name)}</b>\n\n"
         "📱 Endi telefon raqamingizni yuboring.\n"
         "Pastdagi tugmani bosishingiz mumkin:",
         parse_mode="HTML",
@@ -159,23 +189,25 @@ async def finish_registration(message: Message, state: FSMContext, phone: str, b
     
     await state.clear()
     
+    safe_name = html.escape(full_name)
+    safe_username = html.escape(message.from_user.username or 'yoq')
     await message.answer(
         "✅ <b>Ro'yxatdan o'tdingiz!</b>\n\n"
-        f"👤 Ism: <b>{full_name}</b>\n"
-        f"📱 Telefon: <b>{phone}</b>\n\n"
+        f"👤 Ism: <b>{safe_name}</b>\n"
+        f"📱 Telefon: <b>{html.escape(phone)}</b>\n\n"
         "⏳ Sizning so'rovingiz admin tomonidan ko'rib chiqilmoqda.\n"
         "Tasdiqlangandan keyin xabar yuboriladi va xarid qila olasiz.",
         parse_mode="HTML",
         reply_markup=ReplyKeyboardRemove()
     )
-    
+
     # Adminlarga xabar
     admin_text = (
         f"🆕 <b>Yangi usta ro'yxatdan o'tdi!</b>\n\n"
-        f"👤 Ism: <b>{full_name}</b>\n"
-        f"📱 Telefon: <code>{phone}</code>\n"
+        f"👤 Ism: <b>{safe_name}</b>\n"
+        f"📱 Telefon: <code>{html.escape(phone)}</code>\n"
         f"🆔 Telegram ID: <code>{message.from_user.id}</code>\n"
-        f"👤 Username: @{message.from_user.username or 'yoq'}"
+        f"👤 Username: @{safe_username}"
     )
     
     for admin_id in config.ADMIN_IDS:

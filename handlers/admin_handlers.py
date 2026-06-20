@@ -3,6 +3,7 @@ Admin paneli handlerlari
 Yangilangan: sotuv hisoboti, qarz boshqaruvi, kategoriyalar, Excel eksport
 """
 import os
+import html
 import tempfile
 import aiosqlite
 from datetime import datetime, timedelta, date
@@ -1059,7 +1060,7 @@ async def _ask_sell_payment(target_message, state: FSMContext, edit: bool, buyer
     await state.set_state(SellStates.choosing_payment)
     text = (
         f"🧾 <b>Sotuv:</b>\n\n"
-        f"👤 Usta: <b>{buyer}</b>\n"
+        f"👤 Usta: <b>{html.escape(str(buyer))}</b>\n"
         f"{product.get('category_icon','📦')} {_product_title(product)}\n"
         f"📦 {qty} dona\n"
         f"💰 Summa: <b>{int(total):,} so'm</b>\n"
@@ -1133,7 +1134,7 @@ async def _finalize_sale(state: FSMContext, payment_status: str, amount) -> str:
     text = (
         f"✅ <b>Sotuv qayd etildi!</b>\n\n"
         f"🆔 #{res['order_id']}\n"
-        f"👤 Usta: <b>{buyer}</b>\n"
+        f"👤 Usta: <b>{html.escape(str(buyer))}</b>\n"
         f"💰 Summa: <b>{int(res['total']):,} so'm</b>\n"
         f"📈 Foyda: <b>{int(res['profit']):,} so'm</b>\n"
         f"💼 To'lov: <b>{pstatus_txt}</b>\n"
@@ -1356,7 +1357,7 @@ async def receipts_history(callback: CallbackQuery):
             f"| {str(r['created_at'])[:16]}"
         )
         if r.get("note"):
-            line += f" | 🏬 {r['note']}"
+            line += f" | 🏬 {html.escape(str(r['note']))}"
         text += line + "\n\n"
     text += f"💸 <b>So'nggi {len(rows)} kirim summasi: {int(total_spent):,} so'm</b>"
     if len(text) > 3900:

@@ -22,26 +22,32 @@ def uz_now_str() -> str:
     return uz_now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _admin_ids_from_env() -> List[int]:
+    raw = os.getenv("ADMIN_IDS", "")
+    return [int(x) for x in raw.split(",") if x.strip().isdigit()]
+
+
 @dataclass
 class Config:
-    # Telegram bot tokeni - @BotFather dan oling
-    BOT_TOKEN: str = "8000831961:AAFzlLk8EvaDUnXbLouLZ-9AFryk9CA5I5U"
-    
-    # Admin Telegram ID raqamlari (ro'yxat - bir nechta admin bo'lishi mumkin)
-    # O'z ID raqamingizni @userinfobot dan oling
-    ADMIN_IDS: List[int] = field(default_factory=lambda: [5939503983, 813345127, 8001740351])
-    
+    # MAXFIY: bot tokeni endi faqat env (Railway -> Variables) dan o'qiladi.
+    # Kodda token saqlamaymiz (ochiq GitHub'ga tushib ketmasligi uchun).
+    BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
+
+    # Admin Telegram ID raqamlari — env: "id1,id2,id3"
+    ADMIN_IDS: List[int] = field(default_factory=_admin_ids_from_env)
+
     # Ma'lumotlar bazasi yo'li (Railway Volume uchun env orqali "/data/shop.db")
     DB_NAME: str = os.getenv("DB_NAME", "shop.db")
-    
-    # To'lov kartasi (plastik to'lov uchun yagona admin kartasi)
-    CARD_NUMBER: str = "9860 3501 4277 2812"
-    CARD_OWNER: str = "Hakimjon Otajonov"
 
-    # Do'kon ma'lumotlari
-    SHOP_ADDRESS: str = "Mangit shahri bozori, Orientr Xalq banki ro'parasi"
-    SHOP_PHONE: str = "+998 93 353 07 23"
-    SHOP_HOURS: str = "09:00 - 20:00 (Har kuni)"
+    # To'lov kartasi (plastik to'lov uchun) — env'dan
+    CARD_NUMBER: str = os.getenv("CARD_NUMBER", "")
+    CARD_OWNER: str = os.getenv("CARD_OWNER", "")
+
+    # Do'kon ma'lumotlari (maxfiy emas — standart qiymat qoldirildi)
+    SHOP_ADDRESS: str = os.getenv(
+        "SHOP_ADDRESS", "Mangit shahri bozori, Orientr Xalq banki ro'parasi")
+    SHOP_PHONE: str = os.getenv("SHOP_PHONE", "+998 93 353 07 23")
+    SHOP_HOURS: str = os.getenv("SHOP_HOURS", "09:00 - 20:00 (Har kuni)")
 
 
 config = Config()
