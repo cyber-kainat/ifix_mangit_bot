@@ -575,6 +575,57 @@ async def upsert_product(category_id: int, model_id: Optional[int], name: str,
         return "added"
 
 
+async def get_product_id(category_id: int, model_id, name: str):
+    """Import: (kategoriya+model+nom) bo'yicha mahsulot id (variant biriktirish uchun)."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        if model_id is None:
+            cur = await db.execute(
+                "SELECT id FROM products WHERE category_id = ? AND model_id IS NULL "
+                "AND name = ? COLLATE NOCASE", (category_id, name))
+        else:
+            cur = await db.execute(
+                "SELECT id FROM products WHERE category_id = ? AND model_id = ? "
+                "AND name = ? COLLATE NOCASE", (category_id, model_id, name))
+        row = await cur.fetchone()
+        return row["id"] if row else None
+
+
+# ---- Variantlar (import + boshqaruv) ----
+
+async def clear_variants(product_id: int) -> None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("DELETE FROM variants WHERE product_id = ?", (product_id,))
+        await db.commit()
+
+
+async def add_variant(product_id: int, sifati: str, olcham: str, rangi: str,
+                      price: float, old_price, quantity: int) -> int:
+    async with aiosqlite.connect(DB_NAME) as db:
+        cur = await db.execute(
+            """INSERT INTO variants
+               (product_id, sifati, olcham, rangi, price, old_price, quantity, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (product_id, sifati or None, olcham or None, rangi or None,
+             price, old_price, quantity, uz_now_str()))
+        await db.commit()
+        return cur.lastrowid
+
+
+async def sync_product_quantity(product_id: int) -> None:
+    """product.quantity = variantlar yig'indisi (variant bo'lsa)."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(quantity),0) AS q "
+            "FROM variants WHERE product_id = ?", (product_id,))
+        r = await cur.fetchone()
+        if r and int(r["n"]) > 0:
+            await db.execute("UPDATE products SET quantity = ? WHERE id = ?",
+                             (int(r["q"]), product_id))
+            await db.commit()
+
+
 async def get_product(product_id: int) -> Optional[dict]:
     async with aiosqlite.connect(DB_NAME) as db:
         db.row_factory = aiosqlite.Row

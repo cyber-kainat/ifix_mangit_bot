@@ -788,49 +788,88 @@ async def import_file(message: Message, state: FSMContext, bot: Bot):
     added = updated = skipped = 0
     errors = []
 
+    def _s(r, k):
+        return str(r.get(k)).strip() if r.get(k) else ""
+
+    def _has_var(r):
+        return bool(_s(r, "sifati") or _s(r, "olcham") or _s(r, "rangi"))
+
+    # Bir xil (Kategoriya+Brend+Model+Nomi) qatorlarni guruhlaymiz (variantlar uchun)
+    groups = {}
     for r in rows:
-        cval = str(r["category"]).strip() if r["category"] else ""
-        cat = catmap.get(cval.lower())
+        key = (_s(r, "category").lower(), _s(r, "brand").lower(),
+               _s(r, "model").lower(), _s(r, "name").lower())
+        groups.setdefault(key, []).append(r)
+
+    for key, grp in groups.items():
+        first = grp[0]
+        cat = catmap.get(_s(first, "category").lower())
         if not cat:
-            skipped += 1
-            errors.append(f"{r['row']}-qator: kategoriya '{cval}' noto'g'ri")
+            skipped += len(grp)
+            errors.append(f"{first['row']}-qator: kategoriya noto'g'ri")
             continue
-
-        name = str(r["name"]).strip() if r["name"] else ""
+        name = _s(first, "name")
         if not name:
-            skipped += 1
-            errors.append(f"{r['row']}-qator: nomi bo'sh")
+            skipped += len(grp)
+            errors.append(f"{first['row']}-qator: nomi bo'sh")
             continue
-
-        price = _to_number(r["price"])
-        if price is None or price <= 0:
-            skipped += 1
-            errors.append(f"{r['row']}-qator: narx noto'g'ri")
-            continue
-
-        cost = _to_number(r["cost"]) or 0
-        qty = _to_int(r["quantity"]) or 0
-        minq = _to_int(r["min"])
-        if minq is None:
-            minq = 3
-        desc = str(r["description"]).strip() if r["description"] else ""
 
         model_id = None
         if cat["requires_model"]:
-            bval = str(r["brand"]).strip() if r["brand"] else ""
-            mval = str(r["model"]).strip() if r["model"] else ""
+            bval, mval = _s(first, "brand"), _s(first, "model")
             if not bval or not mval:
-                skipped += 1
-                errors.append(f"{r['row']}-qator: {cat['name']} uchun brend va model shart")
+                skipped += len(grp)
+                errors.append(f"{first['row']}-qator: brend va model shart")
                 continue
             brand_id = await db.get_or_create_brand(bval)
             model_id = await db.get_or_create_model(brand_id, mval)
 
-        res = await db.upsert_product(cat["id"], model_id, name, cost, price, qty, minq, desc)
-        if res == "added":
-            added += 1
+        minq = _to_int(first["min"])
+        if minq is None:
+            minq = 1
+        desc = _s(first, "description")
+        var_rows = [r for r in grp if _has_var(r)]
+
+        if var_rows:
+            # Variantli mahsulot: har qator = bitta variant (o'z narxi/miqdori bilan)
+            valid = []
+            for r in var_rows:
+                pr = _to_number(r["price"])
+                if pr is None or pr <= 0:
+                    skipped += 1
+                    errors.append(f"{r['row']}-qator: variant narxi noto'g'ri")
+                    continue
+                valid.append((r, pr))
+            if not valid:
+                continue
+            base_price = min(p for _, p in valid)
+            base_cost = min((_to_number(r["cost"]) or 0) for r, _ in valid)
+            res = await db.upsert_product(
+                cat["id"], model_id, name, base_cost, base_price, 0, minq, desc)
+            pid = await db.get_product_id(cat["id"], model_id, name)
+            if pid:
+                await db.clear_variants(pid)
+                for r, pr in valid:
+                    await db.add_variant(
+                        pid, _s(r, "sifati"), _s(r, "olcham"), _s(r, "rangi"),
+                        pr, None, _to_int(r["quantity"]) or 0)
+                await db.sync_product_quantity(pid)
+            added += 1 if res == "added" else 0
+            updated += 1 if res == "updated" else 0
         else:
-            updated += 1
+            # Oddiy (variantsiz) mahsulot
+            r = grp[-1]
+            price = _to_number(r["price"])
+            if price is None or price <= 0:
+                skipped += len(grp)
+                errors.append(f"{r['row']}-qator: narx noto'g'ri")
+                continue
+            cost = _to_number(r["cost"]) or 0
+            qty = _to_int(r["quantity"]) or 0
+            res = await db.upsert_product(
+                cat["id"], model_id, name, cost, price, qty, minq, desc)
+            added += 1 if res == "added" else 0
+            updated += 1 if res == "updated" else 0
 
     await state.clear()
 

@@ -16,6 +16,10 @@ HEADER_MAP = {
     "brend": "brand", "brand": "brand",
     "model": "model",
     "nomi": "name", "nom": "name", "mahsulot": "name", "name": "name", "turi": "name",
+    "sifati": "sifati", "sifat": "sifati", "quality": "sifati",
+    "o'lcham": "olcham", "olcham": "olcham", "o`lcham": "olcham",
+    "fram": "olcham", "fram b": "olcham", "frame": "olcham", "size": "olcham",
+    "rangi": "rangi", "rang": "rangi", "color": "rangi", "rangti": "rangi",
     "tannarx": "cost", "cost": "cost",
     "narx": "price", "sotish": "price", "price": "price", "sotish narxi": "price",
     "miqdor": "quantity", "soni": "quantity", "qty": "quantity",
@@ -26,7 +30,8 @@ HEADER_MAP = {
 
 CATEGORIES = ["Ekran", "Orqa krishka", "Batareya", "Kamera shisha", "Pastki plata", "Aksessuar"]
 
-HEADERS = ["Kategoriya", "Brend", "Model", "Nomi", "Tannarx", "Narx", "Miqdor", "Min", "Tavsif"]
+HEADERS = ["Kategoriya", "Brend", "Model", "Nomi", "Sifati", "O'lcham", "Rangi",
+           "Tannarx", "Narx", "Miqdor", "Min", "Tavsif"]
 
 
 def generate_template() -> str:
@@ -43,18 +48,22 @@ def generate_template() -> str:
         c.fill = hfill
         c.alignment = Alignment(horizontal="center")
 
+    # Ustun: Kategoriya, Brend, Model, Nomi, Sifati, O'lcham, Rangi, Tannarx, Narx, Miqdor, Min, Tavsif
     examples = [
-        ["Ekran", "iPhone", "13", "OLED Original", 595000, 850000, 10, 3, "Original ekran"],
-        ["Ekran", "iPhone", "13", "OLED Copy", 350000, 520000, 20, 5, ""],
-        ["Batareya", "Samsung", "S22", "Original 4000mAh", 90000, 150000, 15, 5, ""],
-        ["Orqa krishka", "iPhone", "14", "Original krishka", 70000, 130000, 8, 3, ""],
-        ["Aksessuar", "", "", "Universal kabel Type-C", 8000, 15000, 100, 10, "Brend shart emas"],
+        # Variantli mahsulot: bir Model+Nom, bir nechta Sifati/O'lcham/Rangi qator
+        ["Ekran", "Samsung", "A15", "A15 ekran", "Change glass", "Fram B", "", 0, 0, 5, 1, ""],
+        ["Ekran", "Samsung", "A15", "A15 ekran", "Change glass", "No Frame", "", 0, 0, 5, 1, ""],
+        ["Ekran", "Samsung", "A15", "A15 ekran", "Service", "", "Black", 0, 0, 5, 1, ""],
+        ["Ekran", "Samsung", "A15", "A15 ekran", "OLED", "", "Black", 0, 0, 5, 1, ""],
+        # Variantsiz (oddiy) mahsulot: Sifati/O'lcham/Rangi bo'sh
+        ["Batareya", "Samsung", "S22", "Original 4000mAh", "", "", "", 90000, 150000, 15, 1, ""],
+        ["Aksessuar", "", "", "Universal kabel Type-C", "", "", "", 8000, 15000, 100, 1, "Brend shart emas"],
     ]
     for r, row in enumerate(examples, 2):
         for i, v in enumerate(row, 1):
             ws.cell(r, i, v)
 
-    widths = [16, 12, 12, 28, 12, 12, 10, 8, 30]
+    widths = [14, 11, 11, 22, 16, 12, 12, 11, 11, 9, 7, 22]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
@@ -73,15 +82,24 @@ def generate_template() -> str:
         "• Brend — Ekran/Krishka/Batareya/Kamera/Plata uchun MAJBURIY (mas: iPhone).",
         "          Aksessuar uchun BO'SH qoldiriladi.",
         "• Model — yuqoridagilar uchun MAJBURIY (mas: 13, S22). Aksessuar uchun bo'sh.",
-        "• Nomi (MAJBURIY) — mahsulot turi (mas: OLED Original, Original 4000mAh).",
+        "• Nomi (MAJBURIY) — mahsulot nomi (mas: A15 ekran, Original 4000mAh).",
+        "• Sifati — variant sifati (mas: Original, Change glass, Service, OLED). Bo'sh = variantsiz.",
+        "• O'lcham — mas: Fram B, No Frame, Katta, Kichik. Ixtiyoriy.",
+        "• Rangi — mas: Black, White, Green. Ixtiyoriy.",
         "• Tannarx — sotib olingan narx (raqam). Bo'sh bo'lsa 0.",
         "• Narx (MAJBURIY) — sotish narxi (raqam, 0 dan katta).",
         "• Miqdor — nechta dona (raqam). Bo'sh bo'lsa 0.",
-        "• Min — shu sondan kam qolsa 'tugab qolgan' deb belgilanadi. Bo'sh bo'lsa 3.",
+        "• Min — shu sondan kam qolsa 'tugab qolgan'. Bo'sh bo'lsa 1.",
         "• Tavsif — ixtiyoriy.",
         "",
+        "VARIANTLAR (Sifati/O'lcham/Rangi):",
+        "• Bir mahsulotning bir nechta sifati/rangi bo'lsa — Kategoriya+Brend+Model+Nomi",
+        "  bir xil qilib, har variant uchun ALOHIDA QATOR yozing (Sifati/O'lcham/Rangi farqli).",
+        "• Har variantning O'Z narxi va miqdori bo'ladi (shu qatorda).",
+        "• Sifati/O'lcham/Rangi bo'sh bo'lsa — oddiy (variantsiz) mahsulot bo'ladi.",
+        "",
         "MUHIM: bir xil Kategoriya + Brend + Model + Nomi bo'lsa,",
-        "mavjud mahsulot YANGILANADI (narx/miqdor ustiga yoziladi), takrorlanmaydi.",
+        "mavjud mahsulot YANGILANADI; variantlari qaytadan yoziladi.",
         "Yangi brend/model bo'lsa — avtomatik yaratiladi.",
     ]
     for r, t in enumerate(notes, 1):
@@ -156,6 +174,9 @@ def parse_import_file(path: str):
             "brand": cell(raw, "brand"),
             "model": cell(raw, "model"),
             "name": cell(raw, "name"),
+            "sifati": cell(raw, "sifati"),
+            "olcham": cell(raw, "olcham"),
+            "rangi": cell(raw, "rangi"),
             "cost": cell(raw, "cost"),
             "price": cell(raw, "price"),
             "quantity": cell(raw, "quantity"),
