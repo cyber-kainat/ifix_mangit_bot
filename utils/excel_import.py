@@ -50,11 +50,10 @@ def generate_template() -> str:
 
     # Ustun: Kategoriya, Brend, Model, Nomi, Sifati, O'lcham, Rangi, Tannarx, Narx, Miqdor, Min, Tavsif
     examples = [
-        # Variantli mahsulot: bir Model+Nom, bir nechta Sifati/O'lcham/Rangi qator
-        ["Ekran", "Samsung", "A15", "A15 ekran", "Change glass", "Fram B", "", 0, 0, 5, 1, ""],
-        ["Ekran", "Samsung", "A15", "A15 ekran", "Change glass", "No Frame", "", 0, 0, 5, 1, ""],
-        ["Ekran", "Samsung", "A15", "A15 ekran", "Service", "", "Black", 0, 0, 5, 1, ""],
-        ["Ekran", "Samsung", "A15", "A15 ekran", "OLED", "", "Black", 0, 0, 5, 1, ""],
+        # Variantli mahsulot: bir Model+Nom, har sifat uchun alohida qator
+        ["Ekran", "Samsung", "A15", "Samsung Galaxy A15 Ekran", "INCELL", "", "", 0, 0, 5, 1, ""],
+        ["Ekran", "Samsung", "A15", "Samsung Galaxy A15 Ekran", "ORIGINAL", "", "", 0, 0, 5, 1, ""],
+        ["Ekran", "Samsung", "A15", "Samsung Galaxy A15 Ekran", "OLED", "", "", 0, 0, 5, 1, ""],
         # Variantsiz (oddiy) mahsulot: Sifati/O'lcham/Rangi bo'sh
         ["Batareya", "Samsung", "S22", "Original 4000mAh", "", "", "", 90000, 150000, 15, 1, ""],
         ["Aksessuar", "", "", "Universal kabel Type-C", "", "", "", 8000, 15000, 100, 1, "Brend shart emas"],
